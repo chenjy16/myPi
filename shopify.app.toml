@@ -1,0 +1,52 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "09245d607cee07f382950e6b96a98922"
+application_url = "https://shopify.dev/apps/default-app-home"
+embedded = true
+name = "mypi"
+
+[access_scopes]
+# Beta 主链路只读：同步、建议、决策、采购计划全部不改写商品。
+# 唯一的写点是商品文案 apply，而它由 PRODUCT_COPY_ENABLED=false 关闭；
+# 重新开放文案时再把 write_products 加回来（旧值：
+# scopes = "read_products,write_products,read_inventory,read_orders,read_locations"）。
+# 权限最小化本身就是上架审核项，多要一个写权限要多解释一遍。
+scopes = "read_products,read_inventory,read_orders,read_locations"
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = ["app/uninstalled"]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/scopes_update"
+  topics = ["app/scopes_update"]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/inventory_levels/update"
+  topics = ["inventory_levels/update"]
+
+  # orders/create 与 orders/cancelled 属于 protected customer data 主题，未通过
+  # Partners 后台的 Customer data protection 审批前无法订阅（会让 shopify app dev 启动失败）。
+  # 审批通过后再打开这两条订阅，路由 app/routes/webhooks.orders.*.tsx 已就位。
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/customers/data_request"
+  compliance_topics = ["customers/data_request"]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/customers/redact"
+  compliance_topics = ["customers/redact"]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/shop/redact"
+  compliance_topics = ["shop/redact"]
+
+[auth]
+redirect_urls = ["https://shopify.dev/apps/default-app-home/api/auth"]
+
+[build]
+include_config_on_deploy = true
+automatically_update_urls_on_dev = true

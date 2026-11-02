@@ -1,0 +1,328 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma datasource: PostgreSQL (hosted dev DB via DATABASE_URL in .env).
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for string adapter notes.
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+model ProductDraft {
+  id                      String    @id @default(cuid())
+  shop                    String
+  requestId               String
+  productId               String
+  productTitle            String
+  originalTitle           String
+  originalDescriptionHtml String
+  suggestedTitle          String
+  suggestedDescription    String
+  status                  String    @default("pending")
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  appliedAt               DateTime?
+
+  @@unique([shop, requestId])
+  @@index([shop, createdAt])
+}
+
+model InventorySettings {
+  shop                 String    @id
+  locationId           String?
+  locationName         String?
+  timezone             String    @default("UTC")
+  currencyCode         String    @default("USD")
+  leadTimeDays         Int       @default(14)
+  safetyStockDays      Int       @default(7)
+  reviewPeriodDays     Int       @default(14)
+  lastInventorySyncAt  DateTime?
+  lastSalesSyncAt      DateTime?
+  salesHistoryComplete Boolean   @default(false)
+  /// 当前授权下可见的历史起点（店铺时区 YYYY-MM-DD），用于算 Observed Demand 的样本天数。
+  salesWindowStart     String?
+  /// 商家在 Settings 保存补货参数的时间；null 表示仍是 schema 默认值（系统估计），供 UI 如实标注来源。
+  replenishmentSettingsSavedAt DateTime?
+  updatedAt            DateTime  @updatedAt
+}
+
+/// 店铺全部库存地点（多地点模型基础表），由同步任务写入。
+model Location {
+  id                String   @id @default(cuid())
+  shop              String
+  shopifyLocationId String
+  name              String
+  isActive          Boolean  @default(true)
+  syncedAt          DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([shop, shopifyLocationId])
+  @@index([shop, isActive])
+}
+
+/// 每日库存快照：同一 (地点, 变体) 每天一行，按店铺时区切日，不再整表覆盖。
+model InventorySnapshot {
+  id           String   @id
+  shop         String
+  locationId   String
+  variantId    String
+  snapshotDate String
+  productId    String
+  productTitle String
+  variantTitle String
+  sku          String?
+  tracked      Boolean
+  available    Int      @default(0)
+  incoming     Int      @default(0)
+  onHand       Int?
+  unitCost     Float?
+  capturedAt   DateTime @default(now())
+
+  @@unique([shop, locationId, variantId, snapshotDate])
+  @@index([shop, locationId, snapshotDate, tracked])
+  @@index([shop, variantId, snapshotDate])
+}
+
+/// 库存变化事件流，append-only；订单、Webhook、定时快照都往这里写。
+model InventoryEvent {
+  id             String   @id @default(cuid())
+  shop           String
+  locationId     String?
+  variantId      String
+  changeType     String
+  delta          Int?
+  availableAfter Int?
+  source         String
+  externalId     String?
+  occurredAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  @@index([shop, variantId, occurredAt])
+  @@index([shop, occurredAt])
+  @@index([shop, source, externalId])
+}
+
+/// 后台同步任务台账：cron / webhook / 手动触发均登记，含游标与错误。
+model DataSyncJob {
+  id               String    @id @default(cuid())
+  shop             String
+  jobType          String
+  status           String    @default("queued")
+  triggeredBy      String    @default("manual")
+  cursor           String?
+  recordsProcessed Int       @default(0)
+  error            String?
+  startedAt        DateTime?
+  finishedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  /// running 期间占用 "shop:jobType"，完成或失败后置空；唯一约束即跨进程的任务锁。
+  activeKey String? @unique
+
+  @@index([shop, jobType, status])
+  @@index([shop, startedAt])
+}
+
+model SalesDaily {
+  id        String @id @default(cuid())
+  shop      String
+  variantId String
+  date      String
+  quantity  Int
+
+  @@unique([shop, variantId, date])
+  @@index([shop, date])
+}
+
+/// 供应商档案：商家维护的本应用数据，不写 Shopify；停用即退出计算，删除连带解绑其 SKU。
+model Supplier {
+  id           String   @id @default(cuid())
+  shop         String
+  name         String
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+  /// 供应商级交期（天）；null 表示沿用店铺级补货参数。
+  leadTimeDays Int?
+  notes        String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  variants VariantSupplier[]
+
+  @@unique([shop, name])
+  @@index([shop, isActive])
+}
+
+/// 变体级供货绑定：MVP 一个变体一个主供应商；MOQ 与 case pack 直接决定建议量的向上取整口径。
+model VariantSupplier {
+  id               String   @id @default(cuid())
+  shop             String
+  variantId        String
+  supplierId       String
+  /// 最小起订量（件）；0 表示无起订门槛。
+  minOrderQuantity Int      @default(0)
+  /// 整箱单位（件/箱）；0 或 1 表示不按箱取整。
+  casePack         Int      @default(0)
+  /// 供应商报价单价；Beta 仅用于展示与后续采购计划，不覆盖 Shopify 的成本记录。
+  unitCost         Float?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@unique([shop, variantId])
+  @@index([shop, supplierId])
+}
+
+/// 采购计划头：从 accepted/edited 建议按供应商归并生成；状态机 open → ordered / cancelled。
+model PurchasePlan {
+  id           String    @id @default(cuid())
+  shop         String
+  /// 面向商家的店内编号 PP-0001，按店铺递增。
+  reference    String
+  supplierId   String?
+  /// 供应商名快照：供应商后来被删也要让计划读得通，不靠外键存活。
+  supplierName String?
+  locationId   String
+  status       String    @default("open")
+  /// 商家填写的计划采购日期（店铺时区 YYYY-MM-DD），与状态流转时间分开存。
+  purchaseDate String?
+  notes        String?
+  /// 标记「已下采购单」的流转时间。
+  orderedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  lines PurchasePlanLine[]
+
+  @@unique([shop, reference])
+  @@index([shop, status])
+}
+
+/// 采购计划行：来自建议的商家确认量；同计划同变体唯一，重复并入由服务层累加。
+model PurchasePlanLine {
+  id           String  @id @default(cuid())
+  shop         String
+  planId       String
+  variantId    String
+  productTitle String
+  variantTitle String
+  sku          String?
+  quantity     Int
+  unitCost     Float?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  plan PurchasePlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, variantId])
+  @@index([shop, planId])
+}
+
+/// 补货建议的当前决策态。pending 由同步自动登记；paused 是数据异常时的运行时派生态，不落库。
+model ReorderRecommendation {
+  id                String   @id @default(cuid())
+  shop              String
+  locationId        String
+  variantId         String
+  suggestedQuantity Int
+  quantity          Int
+  status            String
+  confidence        String   @default("medium")
+  demandWindowDays  Int      @default(30)
+  demandPerDay      Float    @default(0)
+  demandSampleDays  Int      @default(0)
+  /// 本行建议最后一次由哪次计算刷新，用于判断商家确认的是不是过期数字。
+  computedAt        DateTime @default(now())
+  /// 最近一次决策附带的商家理由（改量/忽略时填写），随最新决策覆盖。
+  decisionReason    String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([shop, locationId, variantId])
+  @@index([shop, locationId, status])
+}
+
+/// 补货决策审计流水，append-only；人工动作与系统登记都写一行，用于追溯与算采纳率。
+model RecommendationAudit {
+  id                String   @id @default(cuid())
+  shop              String
+  locationId        String
+  variantId         String
+  action            String
+  fromStatus        String?
+  toStatus          String
+  suggestedQuantity Int
+  quantity          Int
+  confidence        String?
+  /// 操作者：同步等系统写入为 system，人在应用里操作为 merchant（offline session 识别不到具体员工）
+  operator          String?
+  /// 商家在改量/忽略时留下的理由，与本次动作同事务写入。
+  reason            String?
+  /// 请求级幂等键：同一次表单提交（双击/重试）共用一个 key，撞唯一索引即拒绝重复落账。系统写入为 null。
+  requestKey        String?  @unique
+  createdAt         DateTime @default(now())
+
+  @@index([shop, locationId, variantId, createdAt])
+  @@index([shop, action, createdAt])
+}
+
+/// 产品埋点事件，append-only。props 只放业务上下文（结果、数量、页面），不放个人信息。
+model AnalyticsEvent {
+  id        String   @id @default(cuid())
+  shop      String
+  /// 13 类事件之一，取值以 app/lib/analytics.ts 的清单为准。
+  type      String
+  props     Json?
+  createdAt DateTime @default(now())
+
+  @@index([shop, type, createdAt])
+  @@index([shop, createdAt])
+}
+
+/// 商家对单条建议的反馈（有用/没用 + 原因），与 variant 和最近一次审计关联。
+model AdviceFeedback {
+  id        String  @id @default(cuid())
+  shop      String
+  locationId String
+  variantId String
+  /// useful | not_useful，由 reason 推导，不允许前端各写一套。
+  verdict   String
+  /// too_high | too_low | not_needed_now | bad_data | other
+  reason    String?
+  comment   String?
+  /// 关联的 RecommendationAudit.id；当时没有审计行则为 null。
+  auditId   String?
+  createdAt DateTime @default(now())
+
+  @@index([shop, variantId, createdAt])
+  @@index([shop, verdict, createdAt])
+}

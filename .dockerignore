@@ -1,0 +1,21 @@
+# 构建产物与依赖（依赖由镜像内的 npm ci 重新安装）
+.cache
+build
+build-worker
+node_modules
+
+# 本地开发数据库，绝不能进镜像：prisma/dev.sqlite 是 SQLite 适配器留下的
+# 本地会话/业务数据，与生产用的 Postgres 无关，带上只会污染镜像。
+prisma/dev.sqlite
+prisma/dev.sqlite-journal
+database.sqlite
+
+# 凭据。Dockerfile 用 `COPY . .`，而 app/db.server.ts 顶部有 `import "dotenv/config"`，
+# 只要 .env 在镜像里，运行时就会真读它。生产环境变量一律由部署平台注入，
+# 不烤进镜像层（层是缓存的，删掉文件也抹不掉历史层里的明文）。
+.env
+.env.*
+
+# 版本历史（含过往提交里出现过的配置），构建上下文只需要工作树。
+.git
+.gitignore
