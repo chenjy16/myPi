@@ -25,7 +25,7 @@ test("explicit AppError keeps the kind the service chose", () => {
 });
 
 test("connection-level Prisma failures are database, not business errors", () => {
-  for (const code of ["P1001", "P1008", "P2024", "P2028", "P2034"]) {
+  for (const code of ["P1001", "P1002", "P1008", "P2024", "P2028", "P2034"]) {
     const error = prismaLike("PrismaClientKnownRequestError", code, "boom");
     assert.equal(classifyAppError(error), "database", code);
     assert.equal(

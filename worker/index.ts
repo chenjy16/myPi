@@ -26,6 +26,43 @@ function logError(message: string, error: unknown): void {
   );
 }
 
+/** 优雅退出所需的两类句柄：cron 排程（stop 后不再触发新任务）与共享 Prisma 池（disconnect 释放连接）。 */
+type StoppableTask = { stop: () => void };
+const scheduledTasks: StoppableTask[] = [];
+let prismaClient: typeof import("../app/db.server").default | null = null;
+let shuttingDown = false;
+
+/**
+ * 收到 SIGTERM/SIGINT：停止排程 → 断开共享池 → 干净退出。
+ * 兜底定时器 unref，绝不因为等待断开而把进程钉住（容器停机有硬超时）。
+ */
+function shutdown(signal: string): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log(`${signal} received, shutting down gracefully`);
+  for (const task of scheduledTasks) task.stop();
+
+  const graceMs = Number(process.env.WORKER_SHUTDOWN_GRACE_MS ?? 10_000);
+  const force = setTimeout(() => {
+    logError("shutdown timed out, forcing exit", new Error("grace exceeded"));
+    process.exit(1);
+  }, Number.isFinite(graceMs) && graceMs > 0 ? graceMs : 10_000);
+  force.unref();
+
+  const finish = () => {
+    clearTimeout(force);
+    process.exit(0);
+  };
+  if (!prismaClient) {
+    finish();
+    return;
+  }
+  prismaClient
+    .$disconnect()
+    .catch((error: unknown) => logError("prisma disconnect failed", error))
+    .finally(finish);
+}
+
 /** 已授权店铺 = 存储里存在 offline session 的 shop。 */
 async function installedShops(prisma: typeof import("../app/db.server").default) {
   const rows = await prisma.session.findMany({
@@ -64,6 +101,7 @@ async function main(): Promise<void> {
       import("../app/sync-jobs.server"),
     ]);
   const prisma = prismaModule.default;
+  prismaClient = prisma;
   const { unauthenticated } = shopifyModule;
 
   const sweepSnapshots = async (): Promise<void> => {
@@ -131,14 +169,20 @@ async function main(): Promise<void> {
   );
 
   // noOverlap 防止同一进程内上一次扫描还没跑完就被下一个调度点重入。
-  schedule(SNAPSHOT_CRON, () => void sweepSnapshots(), {
-    name: "inventory-snapshot",
-    noOverlap: true,
-  });
-  schedule(SALES_CRON, () => void sweepSales(), {
-    name: "sales-daily",
-    noOverlap: true,
-  });
+  scheduledTasks.push(
+    schedule(SNAPSHOT_CRON, () => void sweepSnapshots(), {
+      name: "inventory-snapshot",
+      noOverlap: true,
+    }),
+    schedule(SALES_CRON, () => void sweepSales(), {
+      name: "sales-daily",
+      noOverlap: true,
+    }),
+  );
+
+  // 排程就绪后才接管停机信号：此时可以安全地 stop 排程并断池。
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 
   // 启动即补跑一次：worker 停机期间错过的整点不必等到下一个调度点。
   await sweepSnapshots();

@@ -53,3 +53,57 @@ Prisma `migrate deploy` 只向前，**没有自动回滚**。因此：
 - web 与 worker 共用镜像、各自独立容器：worker 崩溃不影响对外服务，可单独重启与扩缩（worker 有 `noOverlap` 与任务锁，多副本只会有一份 cron 实际执行——锁被占用时其余运行直接跳过）。
 - 编排系统按 Dockerfile `HEALTHCHECK` 决定摘除与重启；重启策略建议 `unless-stopped` + 部署平台原生滚动。
 - 崩溃遗留的 `running` 同步行由租约机制自动回收（超 `WORKER_JOB_LEASE_MINUTES` 判 failed 并释放锁），无需人工清账。
+- 收到 `SIGTERM` 时 worker 走优雅退出：停止 node-cron 排程（不再触发新 tick）→ `prisma.$disconnect()` 释放连接池 → 干净退出；超过 `WORKER_SHUTDOWN_GRACE_MS`（默认 10s）仍未退出则强制结束，避免容器停机把进程钉成僵尸。若此刻正有一次启动补跑同步在飞行中，它会被硬超时打断，遗留的 `running` 同步行同样由上面的租约回收兜底，不会伪装成"正在同步"。
+
+## 6. 备份与恢复（P1-9）
+
+数据库是唯一需要持久化的状态（会话 offline token、店铺设置、地点目录、每日快照、库存事件、同步台账、每日销量、补货决策与埋点）。Shopify 侧数据是权威源、可随时重新同步，不在备份范围内。
+
+### 6.1 备份方式与节奏
+
+两条腿并用，互为兜底：
+
+1. **Supabase 自动备份 / PITR**（平台层，主）：在 Dashboard → Database → Backups 开启并确认保留窗口。PITR 能把整库恢复到保留窗口内任意时间点；恢复粒度是「整个 project」，适合灾难恢复。
+2. **逻辑备份 `pg_dump`**（脚本层，细粒度、可跨实例）：对 session pooler 连接串做单次全量导出，产物落对象存储（Supabase Storage / 私有桶），**不入库、不进 git**。
+
+   ```bash
+   # 只读导出，走 .env.example 确立的 session pooler；schema + data 一起
+   TS=$(date -u +%Y%m%dT%H%M%SZ)
+   pg_dump "$DATABASE_URL" --format=custom --file="backup/mypi-${TS}.dump"
+   # 校验产物非空且可读头（拿到表数即证明转储完整）
+   pg_restore --list "backup/mypi-${TS}.dump" | head
+   ```
+
+节奏与保留：`pg_dump` 每日一次（错开 worker 的 03:00 销量重建），保留最近 14 份日备 + 发布前手动快照一份；Supabase 备份按平台默认。具体保留天数与 PITR 窗口取决于所购 Supabase 套餐，上线前据 Dashboard 实际值确认并记在这里，不假设未开通的能力。
+
+### 6.2 恢复流程（恢复到一次性 scratch 库验证，绝不直接盖生产）
+
+```bash
+# 1) 建临时库（本地 postgres 或另一个 Supabase project），用 DATABASE_URL_SCRATCH 指向它
+# 2) 逻辑恢复：先建 schema 再灌数据，--no-owner 让对象归属跟随连接用户
+pg_restore --clean --if-exists --no-owner -d "$DATABASE_URL_SCRATCH" "backup/mypi-<TS>.dump"
+# 3) 结构一致性：迁移台账应与生产版本对齐、无 pending
+DATABASE_URL="$DATABASE_URL_SCRATCH" npx prisma migrate status
+```
+
+### 6.3 恢复后的校验（用行数对账，不抽查一两张表就宣称成功）
+
+对 scratch 库逐表比对关键计数与源库备份时的数量级（允许因备份后新写入产生的小幅增长，不允许缺表或量级塌陷）：
+
+```sql
+SELECT 'Session' t, count(*) FROM "Session"
+UNION ALL SELECT 'InventorySnapshot', count(*) FROM "InventorySnapshot"
+UNION ALL SELECT 'SalesDaily', count(*) FROM "SalesDaily"
+UNION ALL SELECT 'DataSyncJob', count(*) FROM "DataSyncJob"
+UNION ALL SELECT 'ReorderRecommendation', count(*) FROM "ReorderRecommendation"
+UNION ALL SELECT 'RecommendationAudit', count(*) FROM "RecommendationAudit"
+UNION ALL SELECT 'AnalyticsEvent', count(*) FROM "AnalyticsEvent";
+```
+
+再跑一遍只读业务校验：用 scratch 库起 web，登录测试店 → Replenishment 页应显示同步后的建议而非空态。计数查询的表名以 `prisma/schema.prisma` 的 model 映射为准，新增核心表时同步补进上面这条对账 SQL。
+
+### 6.4 RPO / RTO 与红线
+
+- **RPO**（最多丢多少数据）：等于上次备份以来的写入间隔——`pg_dump` 日备为 24h、PITR 为分钟级。补货决策与埋点是最不能丢的写路径，正式商家接入前须把 PITR 开到位。
+- **RTO**（多久恢复可用）：以「恢复到 scratch 库并通过 6.3 校验」的实测耗时为准，首次演练后把数字记在这里。
+- **红线**：备份产物含 offline access token 与商家数据，属敏感数据——只放私有加密存储，绝不提交仓库、不进日志；恢复验证只在 scratch 库做，通过后才谈切换，绝不拿生产库当试验场。
