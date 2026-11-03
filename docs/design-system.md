@@ -37,12 +37,34 @@ Rules:
 
 | Component | Contract |
 |---|---|
-| `StatusBadge` / `HealthBadge` | The ONLY way to render the 12 business states (`lib/status.ts` owns tone + label + class). Pages must not hand-roll pills or plain-text statuses. |
+| `StatusBadge` / `ActionStateBadge` / `HealthBadge` / `ConfidenceBadge` / `SyncStatusBadge` / `InventoryStatusBadge` | The ONLY way to render any state-like value (`lib/status.ts` owns tone + label + class; labels for Action Board / CSV / audit come from the existing domain maps). Pages must not hand-roll pills, raw `s-badge` or plain-text statuses. |
 | `EmptyState` | heading + why + next action. "No data" alone is not an empty state. |
-| `LoadingState` | Render while `useNavigation().state !== "idle"` or `useFetcher().state === "submitting"`; also disable the trigger to prevent double submit. |
+| `LoadingState` | Page-level: while `useNavigation().state !== "idle"`. Row-level: only the control whose `intent` + `variantId` matches `fetcher.formData`. Also disable the trigger to prevent double submit. |
+| `TableSearchField` / `TableSortControl` / `TablePageSizeControl` / `TablePagination` / `TableNoResultsHint` | The list-page toolbar family (spec §8.2). Values are controlled by the page; the components read the Polaris host element's `.value` directly because React 18 does not reliably proxy custom-element events. |
 
-Pure logic lives in `app/lib/status.ts` (state semantics) and `app/lib/format.ts`
-(money/quantity/percent/date/missing `—`). Both are unit-tested with node:test.
+Pure logic lives in `app/lib/status.ts` (state semantics), `app/lib/format.ts`
+(money/quantity/percent/rate/date/missing `—`) and `app/lib/table-view.ts`
+(search · sort · page slice). All three are unit-tested with node:test.
+
+## 3b. List-page contract (reference: Replenishment, Sprint 2)
+
+`app/routes/app.inventory.tsx` is the pattern every other list page copies:
+
+1. Loader computes once; **search / sort / paginate run on the client**
+   (`lib/table-view.ts` + `useMemo`). Re-running the loader per keystroke would
+   re-hit the Admin API and double-count the `recommendation_viewed` event.
+2. Query state is one object (`{ search, sort, direction, page, pageSize }`,
+   `DEFAULT_QUERY`). Any change to search / sort column / page size goes through
+   `resetPage()`; the state-tab switch keeps the keyword but returns to page 1.
+3. Null always sorts to the bottom and does not flip with the direction; ties on
+   coverage break toward the larger suggested quantity.
+4. Three distinct empty states, never one generic string: no data at the
+   location · nothing in this Action Board state (offer "Show all variants") ·
+   no match for the keyword (offer "Clear search").
+5. `Showing 1–25 of 132 variants · page 1 of 6` is `aria-live="polite"` so the
+   count is announced after a filter change.
+6. Sort defaults to *Most urgent first*, not to product name — the page is a work
+   queue, not a catalogue.
 
 ## 4. Data formatting (spec §10)
 
@@ -50,8 +72,10 @@ Pure logic lives in `app/lib/status.ts` (state semantics) and `app/lib/format.ts
 |---|---|
 | Currency | `formatMoney(value, shopCurrency)` — never hardcode USD |
 | Quantity | `formatQuantity` — grouped integers, unit stays in the column header |
-| Percentage | `formatPercent` — one decimal |
-| Date/time | `formatDate/DateTime(value, shopTimeZone)` |
+| Percentage | `formatPercent` — one decimal, value passed as 0–100 |
+| Rate | `formatRate` — value passed as the 0–1 fraction the API gives, rendered as a whole percent (`62%`) |
+| Measured quantity | `formatDecimal` — daily sales, coverage days (one decimal by default, no zero padding) |
+| Date/time | `formatDate/DateTime(value, shopTimeZone)` — always `settings.timezone`, never browser-local |
 | Missing | `—` (em dash). Not 0, not "-", not "N/A" |
 | Not enabled | "Not enabled" |
 | Stale | explicit freshness banner; never present old data as new |

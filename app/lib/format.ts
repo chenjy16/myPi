@@ -45,6 +45,27 @@ export function formatPercent(
   return `${value.toFixed(digits)}%`;
 }
 
+/** 比率：接口给的是 0–1 的小数，默认渲染成整数百分比（62%）；null → “—”。 */
+export function formatRate(
+  value: number | null | undefined,
+  digits = 0,
+): string {
+  if (!isNumber(value)) return MISSING;
+  return formatPercent(value * 100, digits);
+}
+
+/** 带小数的量：日均销量、覆盖天数这类需要保留一位精度的数字。 */
+export function formatDecimal(
+  value: number | null | undefined,
+  digits = 1,
+): string {
+  if (!isNumber(value)) return MISSING;
+  return new Intl.NumberFormat("en", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits,
+  }).format(value);
+}
+
 /** 日期：商店时区（IANA 名，如 "America/New_York"）；缺值 “—”。 */
 export function formatDate(
   date: Date | string | null | undefined,

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   useFetcher,
   useLoaderData,
+  useNavigation,
   type ActionFunctionArgs,
   type HeadersFunction,
   type LoaderFunctionArgs,
@@ -18,15 +19,10 @@ import {
   syncInventoryAndSales,
   type DashboardVariant,
 } from "../inventory.server";
-import { INVENTORY_STATUS_LABELS } from "../lib/inventory-calculations";
 import { toSafeError } from "../lib/app-error";
 import { safeLoader } from "../lib/route-error";
 import { buildSyncFreshnessNotice } from "../lib/sync-freshness";
-import {
-  SyncAlreadyRunningError,
-  hasRunningJob,
-  type SyncStatus,
-} from "../sync-jobs.server";
+import { SyncAlreadyRunningError, hasRunningJob } from "../sync-jobs.server";
 import {
   getLatestFeedbackByVariant,
   saveAdviceFeedback,
@@ -54,7 +50,39 @@ import {
   parsePositiveQuantity,
   type ReorderDecisionStatus,
 } from "../lib/reorder-recommendations";
-import type { ReorderConfidenceLevel } from "../lib/reorder-confidence";
+import {
+  formatDateTime,
+  formatDecimal,
+  formatDate,
+  formatMoney,
+  formatQuantity,
+  formatRate,
+  MISSING,
+} from "../lib/format";
+import { isBusinessState } from "../lib/status";
+import {
+  buildTableView,
+  DEFAULT_QUERY,
+  resetPage,
+  toReplenishmentRow,
+  type TableViewQuery,
+} from "../lib/table-view";
+import { EmptyState } from "../components/ui/empty-state";
+import { LoadingState } from "../components/ui/loading-state";
+import {
+  ActionStateBadge,
+  ConfidenceBadge,
+  InventoryStatusBadge,
+  StatusBadge,
+  SyncStatusBadge,
+} from "../components/ui/status-badge";
+import {
+  TableNoResultsHint,
+  TablePageSizeControl,
+  TablePagination,
+  TableSearchField,
+  TableSortControl,
+} from "../components/ui/data-table";
 
 /** 数据异常时的拦截文案：页面上禁用按钮，服务端同样拒绝写入。 */
 const PAUSED_ERROR =
@@ -63,21 +91,6 @@ const PAUSED_ERROR =
 /** 已有同步在跑：这是并发保护，不是故障，所以用信息横幅而不是错误横幅。 */
 const SYNC_ALREADY_RUNNING_NOTICE =
   "A sync for this store is already running — usually a scheduled one or the click you just made. Its results appear here automatically once it finishes.";
-
-const CONFIDENCE_TONES: Record<
-  ReorderConfidenceLevel,
-  "success" | "caution" | "critical"
-> = {
-  high: "success",
-  medium: "caution",
-  low: "critical",
-};
-
-const CONFIDENCE_LABELS: Record<ReorderConfidenceLevel, string> = {
-  high: "High confidence",
-  medium: "Medium confidence",
-  low: "Low confidence",
-};
 
 /** 校验表单里的 Shopify Location GID。 */
 function isValidLocationId(value: FormDataEntryValue | null): value is string {
@@ -404,40 +417,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
-function formatNumber(value: number, maximumFractionDigits = 1): string {
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits }).format(
-    value,
-  );
-}
-
-function formatMoney(value: number, currencyCode: string): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currencyCode,
-    maximumFractionDigits: 2,
-  }).format(value);
-}
-
-function formatDate(value: Date | string | null): string {
-  return value
-    ? new Intl.DateTimeFormat("en-US", {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }).format(new Date(value))
-    : "Not synced yet";
-}
-
-const SYNC_STATUS_LABELS: Record<SyncStatus["current"], string> = {
-  never: "Never synced",
-  running: "Syncing",
-  succeeded: "Up to date",
-  failed: "Last sync failed",
-};
-
-function formatRate(value: number | null): string {
-  return value === null ? "—" : `${Math.round(value * 100)}%`;
-}
-
 /** 六态筛选：all 看全部诊断行，其余按 Action Board 归类。 */
 function filterVariants(
   variants: DashboardVariant[],
@@ -464,8 +443,14 @@ export default function InventoryPage() {
     decisionRequestKeys,
   } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const navigation = useNavigation();
   const isBusy = fetcher.state !== "idle";
+  // 页面级重载反馈：此前全站只有按钮级 loading，导航进来时是一片空白（spec §9）。
+  const isRefreshing = navigation.state === "loading";
   const [filter, setFilter] = useState<ActionBoardState | "all">("all");
+  // 搜索/排序/分页都留在客户端：loader 一次算完，重跑既要多打 Admin API，
+  // 又会把 recommendation_viewed 埋点重复计数。
+  const [query, setQuery] = useState<TableViewQuery>(DEFAULT_QUERY);
   const downloadedExport = useRef<string | null>(null);
 
   const selectedLocationId =
@@ -475,9 +460,10 @@ export default function InventoryPage() {
       ? fetcher.data.selectedLocationId
       : (settings?.locationId ?? "");
   const hasSyncData = Boolean(settings?.lastInventorySyncAt);
+  const timeZone = settings?.timezone ?? null;
   const freshness = buildSyncFreshnessNotice(syncStatus, {
     lastSuccessLabel: syncStatus.lastSuccessfulSyncAt
-      ? formatDate(syncStatus.lastSuccessfulSyncAt)
+      ? formatDate(syncStatus.lastSuccessfulSyncAt, timeZone)
       : null,
   });
   const currentIntent = fetcher.formData?.get("intent");
@@ -499,7 +485,37 @@ export default function InventoryPage() {
     consumedKey && consumedKey.variantId === variantId
       ? consumedKey.requestKey
       : (decisionRequestKeys[variantId] ?? "");
-  const visibleVariants = filterVariants(variants, filter);
+  const activeVariantId = fetcher.formData?.get("variantId");
+  /** 只让真正被提交的那一行转圈，其他行保持可扫读，不被整表置灰。 */
+  const rowIsSubmitting = (variantId: string) =>
+    isBusy && activeVariantId === variantId;
+  const patchQuery = (patch: Partial<TableViewQuery>) =>
+    setQuery((current) => ({ ...current, ...patch }));
+  /** 换了关键词/排序列/每页条数就回第 1 页，避免停在“第 N 页无结果”的死路。 */
+  const patchQueryFromFirstPage = (patch: Partial<TableViewQuery>) =>
+    setQuery((current) => resetPage({ ...current, ...patch }));
+  /** 切状态页签同样回第 1 页，但保留关键词：页签与搜索是两个互不干扰的维度。 */
+  const chooseFilter = (next: ActionBoardState | "all") => {
+    setFilter(next);
+    setQuery((current) => resetPage(current));
+  };
+  const stateVariants = useMemo(
+    () => filterVariants(variants, filter),
+    [variants, filter],
+  );
+  const tableView = useMemo(
+    () => buildTableView(stateVariants.map(toReplenishmentRow), query),
+    [stateVariants, query],
+  );
+  const variantsById = useMemo(
+    () => new Map(variants.map((variant) => [variant.id, variant])),
+    [variants],
+  );
+  // 视图层只负责顺序与切片，单元格仍要读完整的看板数据，所以按 id 映射回去。
+  const visibleVariants = tableView.rows.flatMap((row) => {
+    const source = variantsById.get(row.id);
+    return source ? [source] : [];
+  });
   const namesByVariant = new Map(
     variants.map((variant) => [
       variant.variantId,
@@ -590,13 +606,16 @@ export default function InventoryPage() {
           </s-banner>
         )}
         <s-paragraph>
-          Current sync status: {SYNC_STATUS_LABELS[syncStatus.current]}; last
-          attempt {formatDate(syncStatus.lastSyncAttemptAt)}; last successful{" "}
-          {formatDate(syncStatus.lastSuccessfulSyncAt)}.
+          Sync status: <SyncStatusBadge current={syncStatus.current} /> · last
+          attempt{" "}
+          {formatDateTime(syncStatus.lastSyncAttemptAt, timeZone)} · last
+          successful{" "}
+          {formatDateTime(syncStatus.lastSuccessfulSyncAt, timeZone)}
         </s-paragraph>
         {settings && (
           <s-paragraph>
-            Snapshot date {snapshotDate ?? "none"}; default lead time{" "}
+            Snapshot date {formatDate(snapshotDate, timeZone)}; default lead
+            time{" "}
             {settings.leadTimeDays} days, safety stock{" "}
             {settings.safetyStockDays} days, purchase review cycle{" "}
             {settings.reviewPeriodDays} days. These are system estimates.
@@ -751,7 +770,7 @@ export default function InventoryPage() {
               </s-box>
               <s-box padding="base" background="subdued" borderRadius="base">
                 <s-text type="strong">
-                  {formatNumber(metrics.availableStock, 0)}
+                  {formatQuantity(metrics.availableStock)}
                 </s-text>
                 <s-paragraph>Available stock</s-paragraph>
               </s-box>
@@ -798,10 +817,13 @@ export default function InventoryPage() {
           heading={`Replenishment worklist (${variants.length} variants)`}
         >
           <s-stack direction="block" gap="base">
+            {isRefreshing && (
+              <LoadingState label="Refreshing replenishment data…" />
+            )}
             <s-stack direction="inline" gap="small">
               <s-button
                 variant={filter === "all" ? "primary" : "secondary"}
-                onClick={() => setFilter("all")}
+                onClick={() => chooseFilter("all")}
               >
                 All ({variants.length})
               </s-button>
@@ -809,7 +831,7 @@ export default function InventoryPage() {
                 <s-button
                   key={state}
                   variant={filter === state ? "primary" : "secondary"}
-                  onClick={() => setFilter(state)}
+                  onClick={() => chooseFilter(state)}
                 >
                   {ACTION_BOARD_LABELS[state]} ({board.counts[state]})
                 </s-button>
@@ -820,6 +842,28 @@ export default function InventoryPage() {
                 ? "Every variant synced for this location, with or without reorder advice."
                 : ACTION_BOARD_HINTS[filter]}
             </s-paragraph>
+            {/*
+             * 工具条刻意不依赖宿主组件的 React 事件：搜索/排序/每页条数都是 Polaris
+             * Web Component，值由 data-table 直接读宿主并回传，页面只持有查询状态。
+             */}
+            <div className="dsToolbarGroup" hidden={variants.length === 0}>
+              <TableSearchField
+                value={query.search}
+                onValueChange={(search) => patchQueryFromFirstPage({ search })}
+              />
+              <TableSortControl
+                sort={query.sort}
+                direction={query.direction}
+                onSortChange={(sort) => patchQueryFromFirstPage({ sort })}
+                onDirectionChange={(direction) => patchQuery({ direction })}
+              />
+              <TablePageSizeControl
+                pageSize={query.pageSize}
+                onPageSizeChange={(pageSize) =>
+                  patchQueryFromFirstPage({ pageSize })
+                }
+              />
+            </div>
             <fetcher.Form method="post">
               <input type="hidden" name="intent" value="export-csv" />
               <s-button type="submit" variant="secondary" disabled={isBusy}>
@@ -837,12 +881,38 @@ export default function InventoryPage() {
            * 「Recent decisions」只有 6 个短列，继续用 `auto` 的表格模式。
            */}
           {variants.length === 0 ? (
-            <s-paragraph>
-              The selected location has no active product variants with
-              trackable inventory.
-            </s-paragraph>
-          ) : visibleVariants.length === 0 ? (
-            <s-paragraph>Nothing in this state right now.</s-paragraph>
+            <EmptyState
+              heading="No trackable variants at this location"
+              body="The selected location has no active product variants with tracked inventory, so there is nothing to build coverage or reorder advice from. Pick another location above, or check that the products you expect are actually stocked at this location in Shopify."
+            />
+          ) : stateVariants.length === 0 ? (
+            <EmptyState
+              heading={
+                filter === "all"
+                  ? "Nothing to show in this list"
+                  : `No variants in “${ACTION_BOARD_LABELS[filter]}” right now`
+              }
+              body={
+                filter === "all"
+                  ? "The sync returned no rows for this location. Sync again after changing products or inventory."
+                  : ACTION_BOARD_HINTS[filter]
+              }
+              action={
+                filter !== "all" ? (
+                  <s-button
+                    variant="secondary"
+                    onClick={() => chooseFilter("all")}
+                  >
+                    Show all variants
+                  </s-button>
+                ) : undefined
+              }
+            />
+          ) : tableView.totalRows === 0 ? (
+            <TableNoResultsHint
+              search={query.search}
+              onReset={() => patchQueryFromFirstPage({ search: "" })}
+            />
           ) : (
             <s-table variant="list">
               <s-table-header-row>
@@ -880,31 +950,48 @@ export default function InventoryPage() {
                   // 暂停或没建议时整行按钮锁住；服务端会再挡一次，这里只是不让人白点。
                   const locked = dataHealth.paused || !hasAdvice;
                   const recordedFeedback = feedbackByVariant[variant.variantId];
+                  // 只给当前行里真正被提交的那个按钮转圈，其余按钮保持禁用但不误报进度。
+                  const pendingFor = (intent: string) =>
+                    rowIsSubmitting(variant.variantId) && currentIntent === intent;
+                  // 决策摘要拼成一句人话：忽略态不谈数量，建议变化时提醒重新确认。
+                  const decisionDetail = [
+                    recommendation && recommendation.status !== "ignored"
+                      ? `quantity ${formatQuantity(recommendation.quantity)}`
+                      : null,
+                    recommendation?.decisionReason
+                      ? `reason “${recommendation.decisionReason}”`
+                      : null,
+                    recommendation?.needsReview
+                      ? "advice changed since you decided, please re-confirm"
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
                   return (
                     <s-table-row key={variant.id}>
                       <s-table-cell>
                         {variant.productTitle} — {variant.variantTitle}
                         <br />
-                        SKU: {variant.sku || "Not set"}
+                        SKU: {variant.sku || MISSING}
                         {variant.actionState && (
                           <>
                             <br />
-                            <s-badge tone="neutral">
-                              {ACTION_BOARD_LABELS[variant.actionState]}
-                            </s-badge>
+                            <ActionStateBadge state={variant.actionState} />
                           </>
                         )}
                       </s-table-cell>
                       <s-table-cell>
-                        {INVENTORY_STATUS_LABELS[variant.status]}
+                        <InventoryStatusBadge status={variant.status} />
                       </s-table-cell>
                       <s-table-cell>
-                        {variant.available} / {variant.incoming}
+                        {formatQuantity(variant.available)} /{" "}
+                        {formatQuantity(variant.incoming)}
                       </s-table-cell>
                       <s-table-cell>
-                        {formatNumber(variant.observedDemand.perDay)} units/day
+                        {formatDecimal(variant.observedDemand.perDay)} units/day
                         <br />
-                        {variant.observedDemand.quantity} units over{" "}
+                        {formatQuantity(variant.observedDemand.quantity)} units
+                        over{" "}
                         {variant.observedDemand.sampleDaysAvailable} visible of{" "}
                         {variant.observedDemand.windowDays} days
                         {variant.observedDemand.daysWithSales !== null && (
@@ -918,21 +1005,17 @@ export default function InventoryPage() {
                       <s-table-cell>
                         {variant.daysOfInventory === null
                           ? "No observed sales"
-                          : `${formatNumber(variant.daysOfInventory)} days`}
+                          : `${formatDecimal(variant.daysOfInventory)} days`}
                         <br />
                         {variant.estimatedStockoutDate ??
                           "No stockout estimate"}
                       </s-table-cell>
                       <s-table-cell>
                         <s-text type="strong">
-                          {variant.suggestedReorderQuantity}
+                          {formatQuantity(variant.suggestedReorderQuantity)}
                         </s-text>
                         <br />
-                        <s-badge
-                          tone={CONFIDENCE_TONES[variant.confidence.level]}
-                        >
-                          {CONFIDENCE_LABELS[variant.confidence.level]}
-                        </s-badge>
+                        <ConfidenceBadge level={variant.confidence.level} />
                         {variant.confidence.reasons.map((reason) => (
                           <s-paragraph key={reason.code}>
                             • {reason.label}
@@ -943,17 +1026,17 @@ export default function InventoryPage() {
                       <s-table-cell>
                         <s-stack direction="block" gap="small">
                           {recommendation ? (
-                            <s-paragraph>
-                              {ACTION_BOARD_LABELS[recommendation.status]}
-                              {recommendation.status !== "ignored" &&
-                                ` · quantity ${recommendation.quantity}`}
-                              {recommendation.decisionReason &&
-                                ` · reason “${recommendation.decisionReason}”`}
-                              {recommendation.needsReview &&
-                                " · advice changed since you decided, please re-confirm"}
-                            </s-paragraph>
+                            <s-stack direction="inline" gap="small">
+                              <ActionStateBadge state={recommendation.status} />
+                              {decisionDetail && (
+                                <s-paragraph>{decisionDetail}</s-paragraph>
+                              )}
+                            </s-stack>
                           ) : (
                             <s-paragraph>No decision recorded</s-paragraph>
+                          )}
+                          {pendingFor("advice-feedback") && (
+                            <LoadingState label="Saving feedback…" />
                           )}
                           {dataHealth.paused && (
                             <s-paragraph>
@@ -994,6 +1077,9 @@ export default function InventoryPage() {
                                   type="submit"
                                   variant="primary"
                                   disabled={locked || isBusy}
+                                  {...(pendingFor("accept-recommendation")
+                                    ? { loading: true }
+                                    : {})}
                                 >
                                   Accept recommendation
                                 </s-button>
@@ -1044,6 +1130,9 @@ export default function InventoryPage() {
                                 <s-button
                                   type="submit"
                                   disabled={locked || isBusy}
+                                  {...(pendingFor("edit-recommendation")
+                                    ? { loading: true }
+                                    : {})}
                                 >
                                   Save adjusted quantity
                                 </s-button>
@@ -1080,6 +1169,9 @@ export default function InventoryPage() {
                                 <s-button
                                   type="submit"
                                   disabled={locked || isBusy}
+                                  {...(pendingFor("ignore-recommendation")
+                                    ? { loading: true }
+                                    : {})}
                                 >
                                   Ignore this round
                                 </s-button>
@@ -1109,6 +1201,9 @@ export default function InventoryPage() {
                                   <s-button
                                     type="submit"
                                     disabled={locked || isBusy}
+                                    {...(pendingFor("mark-ordered")
+                                      ? { loading: true }
+                                      : {})}
                                   >
                                     Mark as ordered
                                   </s-button>
@@ -1170,6 +1265,9 @@ export default function InventoryPage() {
                                   type="submit"
                                   variant="tertiary"
                                   disabled={isBusy}
+                                  {...(pendingFor("advice-feedback")
+                                    ? { loading: true }
+                                    : {})}
                                 >
                                   Send feedback
                                 </s-button>
@@ -1184,15 +1282,26 @@ export default function InventoryPage() {
               </s-table-body>
             </s-table>
           )}
+          {/* 计数始终给足上下文：单页时按钮两端禁用，但“共多少条”这句话仍然有用。 */}
+          {tableView.totalRows > 0 && (
+            <TablePagination
+              page={tableView.page}
+              totalPages={tableView.totalPages}
+              totalRows={tableView.totalRows}
+              firstIndex={tableView.firstIndex}
+              lastIndex={tableView.lastIndex}
+              onPageChange={(page) => patchQuery({ page })}
+            />
+          )}
         </s-section>
       )}
 
       <s-section heading="Recent decisions">
         {auditTrail.length === 0 ? (
-          <s-paragraph>
-            No decisions recorded yet. Every accept, adjust, ignore or ordered
-            action adds a row here, and each sync records newly created advice.
-          </s-paragraph>
+          <EmptyState
+            heading="No decisions recorded yet"
+            body="Every accept, adjust, ignore or ordered action adds a row here, and each sync records newly created advice. Nothing has been written for this store yet."
+          />
         ) : (
           <s-table variant="auto">
             <s-table-header-row>
@@ -1214,7 +1323,9 @@ export default function InventoryPage() {
                     {namesByVariant.get(entry.variantId) ??
                       `Variant ${entry.variantId.split("/").pop()}`}
                   </s-table-cell>
-                  <s-table-cell>{formatDate(entry.createdAt)}</s-table-cell>
+                  <s-table-cell>
+                    {formatDateTime(entry.createdAt, timeZone)}
+                  </s-table-cell>
                   <s-table-cell>
                     {entry.action.replace(/-/g, " ")}
                     {entry.reason && (
@@ -1222,12 +1333,21 @@ export default function InventoryPage() {
                     )}
                   </s-table-cell>
                   <s-table-cell>
-                    {entry.fromStatus
-                      ? `${entry.fromStatus} → ${entry.toStatus}`
-                      : `— → ${entry.toStatus}`}
+                    {isBusinessState(entry.fromStatus) ? (
+                      <StatusBadge state={entry.fromStatus} />
+                    ) : (
+                      MISSING
+                    )}{" "}
+                    →{" "}
+                    {isBusinessState(entry.toStatus) ? (
+                      <StatusBadge state={entry.toStatus} />
+                    ) : (
+                      entry.toStatus
+                    )}
                   </s-table-cell>
                   <s-table-cell>
-                    {entry.suggestedQuantity} / {entry.quantity}
+                    {formatQuantity(entry.suggestedQuantity)} /{" "}
+                    {formatQuantity(entry.quantity)}
                   </s-table-cell>
                   <s-table-cell>{entry.operator ?? "unknown"}</s-table-cell>
                 </s-table-row>

@@ -6,6 +6,8 @@ import {
   formatMoney,
   formatQuantity,
   formatPercent,
+  formatRate,
+  formatDecimal,
   formatDate,
   formatDateTime,
 } from "../app/lib/format.ts";
@@ -30,11 +32,27 @@ test("percent keeps one decimal by default", () => {
   assert.equal(formatPercent(0), "0.0%");
 });
 
+test("rates read as whole percent labels off the 0–1 fraction the API gives", () => {
+  assert.equal(formatRate(0.6234), "62%");
+  assert.equal(formatRate(1), "100%");
+  assert.equal(formatRate(0), "0%");
+  assert.equal(formatRate(0.6234, 1), "62.3%");
+});
+
+test("decimals keep at most the requested digits without zero padding", () => {
+  assert.equal(formatDecimal(2.5), "2.5");
+  assert.equal(formatDecimal(2), "2");
+  assert.equal(formatDecimal(2.456), "2.5");
+  assert.equal(formatDecimal(1234.56, 2), "1,234.56");
+});
+
 test("missing or non-finite values always render the em dash", () => {
   for (const value of [null, undefined, NaN, Infinity]) {
     assert.equal(formatQuantity(value as number | null | undefined), MISSING);
     assert.equal(formatMoney(value as number | null | undefined, "USD"), MISSING);
     assert.equal(formatPercent(value as number | null | undefined), MISSING);
+    assert.equal(formatRate(value as number | null | undefined), MISSING);
+    assert.equal(formatDecimal(value as number | null | undefined), MISSING);
   }
   assert.equal(formatDate(null), MISSING);
   assert.equal(formatDate("not-a-date"), MISSING);

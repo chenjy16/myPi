@@ -3,7 +3,12 @@
  * 同一个状态在所有页面必须得到同一 tone 与同一文案；页面不得自建 tone-map。
  * 纯数据模块：可被 node --test 直接加载（.ts 扩展名互导约定）。
  */
+import { INVENTORY_STATUS_LABELS } from "./inventory-calculations.ts";
 import type { DataHealthTone } from "./data-health.ts";
+import type { ActionBoardState } from "./reorder-action-board.ts";
+import type { InventoryHealthStatus } from "./inventory-calculations.ts";
+import type { ReorderConfidenceLevel } from "./reorder-confidence.ts";
+import type { SyncStatusName } from "./sync-job-policy.ts";
 
 /** 补货建议 / 采购计划 / 同步台账的全部业务态。 */
 export type BusinessState =
@@ -47,9 +52,9 @@ export const STATUS_TONE: Record<BusinessState, StatusTone> = {
 };
 
 export const STATUS_LABEL: Record<BusinessState, string> = {
-  pending: "Pending",
+  pending: "Pending review",
   accepted: "Accepted",
-  edited: "Edited",
+  edited: "Adjusted",
   ignored: "Ignored",
   ordered: "Ordered",
   open: "Open",
@@ -99,4 +104,105 @@ export function healthView(tone: HealthTone): StatusView {
     label: HEALTH_LABEL[tone],
     className: TONE_CLASS[resolved],
   };
+}
+
+/**
+ * Action Board 六态与业务态词汇完全重叠，直接复用同一映射，
+ * 这样 Tab、行内徽章、CSV 与审计文案说的是同一套话（spec §8.6）。
+ */
+export function actionStateView(state: ActionBoardState): StatusView {
+  return statusView(state);
+}
+
+/** 语义 tone → Polaris `s-badge` 的 tone 取值（warning 在徽章上是 caution）。 */
+export const POLARIS_BADGE_TONE: Record<
+  StatusTone,
+  "neutral" | "info" | "success" | "caution" | "critical"
+> = {
+  neutral: "neutral",
+  info: "info",
+  success: "success",
+  warning: "caution",
+  critical: "critical",
+};
+
+/** 置信度文案：与库存页既有说法一致，全站唯一。 */
+export const CONFIDENCE_LABEL: Record<ReorderConfidenceLevel, string> = {
+  high: "High confidence",
+  medium: "Medium confidence",
+  low: "Low confidence",
+};
+
+export const CONFIDENCE_TONE: Record<ReorderConfidenceLevel, StatusTone> = {
+  high: "success",
+  medium: "warning",
+  low: "critical",
+};
+
+/** 置信度的展示视图（spec §10：Confidence 必须有一致定义与展示方式）。 */
+export function confidenceView(level: ReorderConfidenceLevel): StatusView {
+  const tone = CONFIDENCE_TONE[level];
+  return { tone, label: CONFIDENCE_LABEL[level], className: TONE_CLASS[tone] };
+}
+
+/** 同步状态文案，沿用库存页既有口径（P0-2）。 */
+export const SYNC_LABEL: Record<SyncStatusName, string> = {
+  never: "Never synced",
+  running: "Syncing",
+  succeeded: "Up to date",
+  failed: "Last sync failed",
+};
+
+export const SYNC_TONE: Record<SyncStatusName, StatusTone> = {
+  never: "neutral",
+  running: "info",
+  succeeded: "success",
+  failed: "critical",
+};
+
+/** 同步状态的展示视图。 */
+export function syncStatusView(current: SyncStatusName): StatusView {
+  const tone = SYNC_TONE[current];
+  return { tone, label: SYNC_LABEL[current], className: TONE_CLASS[tone] };
+}
+
+/**
+ * 库存健康度 → tone。文案继续用 lib/inventory-calculations 的唯一来源（页面与 CSV
+ * 共用），这里只补tone，所以不会第二套说法。
+ * 口径：红色＝已经断货或库存见底，橙色＝覆盖偏薄，绿色＝正常，蓝色＝压货，灰色＝没有信号。
+ */
+export const INVENTORY_STATUS_TONE: Record<
+  InventoryHealthStatus,
+  StatusTone
+> = {
+  stockout: "critical",
+  critical: "critical",
+  stockout_risk: "warning",
+  low_stock: "warning",
+  healthy: "success",
+  overstock: "info",
+  dead_stock: "neutral",
+  no_sales: "neutral",
+};
+
+/** 库存健康度的展示视图。 */
+export function inventoryStatusView(status: InventoryHealthStatus): StatusView {
+  const tone = INVENTORY_STATUS_TONE[status];
+  return {
+    tone,
+    label: INVENTORY_STATUS_LABELS[status],
+    className: TONE_CLASS[tone],
+  };
+}
+
+const BUSINESS_STATES = Object.keys(STATUS_LABEL) as BusinessState[];
+
+/**
+ * 判断审计台账里的状态字符串是否属于统一状态词汇。审计写入的是数据库原值，
+ * 遇到未知历史值时页面仍原样显示，不会被徽章吞掉（不改审计语义，只决定呈现方式）。
+ */
+export function isBusinessState(
+  value: string | null | undefined,
+): value is BusinessState {
+  return typeof value === "string" && BUSINESS_STATES.includes(value as BusinessState);
 }

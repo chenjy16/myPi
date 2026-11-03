@@ -762,21 +762,6 @@
   font-size: var(--fs-sm);
 }
 
-.dsLoadingSpinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--app-border);
-  border-top-color: var(--app-purple);
-  border-radius: var(--radius-pill);
-  animation: dsSpin 0.8s linear infinite;
-}
-
-@keyframes dsSpin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .dsEmptyState {
   display: grid;
   gap: var(--sp-2);
@@ -800,6 +785,43 @@
 
 .dsEmptyStateAction {
   margin-top: var(--sp-2);
+}
+
+/* Table toolbar (search / sort / pagination) — layout only, controls are Polaris. */
+.dsToolbarGroup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sp-2);
+}
+
+.dsToolbarField {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.dsToolbarPagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+
+.dsToolbarCount {
+  color: var(--app-muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.dsToolbarReset {
+  display: grid;
+  gap: var(--sp-2);
+  justify-items: center;
+  padding: var(--sp-4) 0;
+  color: var(--app-muted);
 }
 
 /* Quick actions */
