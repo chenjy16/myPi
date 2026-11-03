@@ -14,6 +14,7 @@ import { authenticate } from "../shopify.server";
 import { ensureInstallTracked } from "../analytics.server";
 import { readSafeErrorPayload, toSafeError } from "../lib/app-error";
 import { safeLoader } from "../lib/route-error";
+import "../styles/tokens.css";
 import "../styles/app-shell.css";
 import "../styles/dashboard.css";
 

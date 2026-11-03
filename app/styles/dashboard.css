@@ -746,7 +746,60 @@
 }
 .pillMuted {
   color: var(--app-slate);
-  background: #f2f1f7;
+  background: var(--app-violet-faint);
+}
+.pillInfo {
+  color: var(--app-info);
+  background: var(--app-info-soft);
+}
+
+/* Shared feedback primitives (Sprint 1 design-system foundation) */
+.dsLoading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--app-muted);
+  font-size: var(--fs-sm);
+}
+
+.dsLoadingSpinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--app-border);
+  border-top-color: var(--app-purple);
+  border-radius: var(--radius-pill);
+  animation: dsSpin 0.8s linear infinite;
+}
+
+@keyframes dsSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.dsEmptyState {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-8) var(--sp-4);
+  text-align: center;
+}
+
+.dsEmptyStateHeading {
+  margin: 0;
+  color: var(--app-ink);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+}
+
+.dsEmptyStateBody {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+}
+
+.dsEmptyStateAction {
+  margin-top: var(--sp-2);
 }
 
 /* Quick actions */
