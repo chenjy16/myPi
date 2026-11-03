@@ -6,6 +6,11 @@ jobs:
   CI:
     name: Node ${{ matrix.node }} and ${{ matrix.manager }}
     runs-on: ubuntu-latest
+    env:
+      # prisma validate/build resolve the datasource env("DATABASE_URL") and fail with
+      # P1012 if it is unset. validate only checks the schema, not connectivity, so a
+      # syntactically valid placeholder is enough — no real database is contacted.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
     strategy:
       matrix:
         node: [22, 24]
