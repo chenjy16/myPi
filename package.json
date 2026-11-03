@@ -4,6 +4,7 @@
   "scripts": {
     "build": "react-router build",
     "test": "node --experimental-transform-types --test tests/*.test.ts",
+    "test:integration": "MYPI_DB_INTEGRATION=1 node --experimental-transform-types --test tests/*.db.test.ts",
     "dev": "shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",

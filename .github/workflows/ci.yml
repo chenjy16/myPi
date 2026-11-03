@@ -8,9 +8,23 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # prisma validate/build resolve the datasource env("DATABASE_URL") and fail with
-      # P1012 if it is unset. validate only checks the schema, not connectivity, so a
-      # syntactically valid placeholder is enough — no real database is contacted.
+      # P1012 if it is unset. The postgres service below satisfies the DB integration
+      # tests (gated on MYPI_DB_INTEGRATION); validate-only steps never contact it.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     strategy:
       matrix:
         node: [22, 24]
@@ -42,3 +56,17 @@ jobs:
 
       - name: Build application
         run: npm run build
+
+      # P1-6 test suite runs once against the ephemeral Postgres (npm + Node 22) so the
+      # matrix stays lean; the DB tests self-skip everywhere else.
+      - name: Apply migrations to the ephemeral Postgres
+        if: ${{ matrix.manager == 'npm' && matrix.node == 22 }}
+        run: npx prisma migrate deploy
+
+      - name: Run unit + mock tests
+        if: ${{ matrix.manager == 'npm' && matrix.node == 22 }}
+        run: npm test
+
+      - name: Run DB integration tests
+        if: ${{ matrix.manager == 'npm' && matrix.node == 22 }}
+        run: npm run test:integration
