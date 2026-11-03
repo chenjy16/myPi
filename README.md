@@ -1,101 +1,195 @@
-# my-pi — Shopify AI 商品文案与 StockPilot 库存助手
+# mypi — Inventory Decision Intelligence for Shopify
 
-面向 Shopify Admin 的嵌入式库存优化应用。当前阶段聚焦 StockPilot 库存诊断与确定性补货建议；AI 商品文案生成功能暂时通过功能开关隐藏，代码与已有草稿数据保留，后续可重新开放。库存功能只读取 Shopify 数据，不会自动修改库存或创建采购订单。
+mypi is an embedded Shopify admin app that turns a store's own sales and inventory
+data into **deterministic replenishment advice**, then carries that advice through a
+full decision loop: review → decide → supplier terms → purchase plan → CSV handoff.
+Every number on screen is computed by plain, testable TypeScript — **AI is never used
+to decide stock levels or order quantities**.
 
-## 技术架构
+The app is **read-only against Shopify**: it reads products, inventory, orders and
+locations, and never writes them back. It does not create Shopify purchase orders or
+modify inventory counts; "Mark ordered" only updates in-app state and its audit trail.
 
-完整架构、数据流、部署拓扑与生产化差距见[技术架构与部署设计](./docs/architecture-and-deployment.md)。目录职责、请求从入口到页面的流转，以及构建/部署与各文件的对应关系见[详细设计文档](./docs/detailed-design.md)。
+> The server-side AI product-copy feature still exists in the codebase but is hidden
+> behind a feature flag (`PRODUCT_COPY_ENABLED = false`) and the app no longer requests
+> the `write_products` scope, so copy generation and write-back are currently inactive.
+> Existing routes and draft data are preserved for a possible future re-enable.
 
-| 层 | 当前技术 |
+## Tech stack
+
+| Layer | Current technology |
 | --- | --- |
-| 运行时 | Node.js 22.19+、TypeScript、npm |
-| Web 应用 | React 18、React Router 7（服务器端 loader/action）、Vite 7 |
-| Shopify 集成 | Shopify 官方 React Router 库、OAuth/session、App Bridge、Admin GraphQL API `2026-10` |
-| 管理界面 | Shopify Admin 嵌入式界面与 Shopify Web Components（`s-*`） |
-| 数据 | Prisma 6 + PostgreSQL（本地开发指向 Supabase）；保存 Shopify session、商品文案草稿、多地点每日库存快照、库存变化事件、每日销量、补货建议决策、建议变更审计流水和同步任务台账 |
-| 后台调度 | 独立 Node worker 进程（`worker/index.ts`）+ node-cron；与 Web 进程分离 |
-| 文案生成 | 服务端 Pi Coding Agent SDK + Zod；模型/API key 只从服务器环境读取 |
-| 库存分析 | Shopify Admin GraphQL API + 确定性 TypeScript 计算；AI 不参与销量或采购数量计算 |
-| 开发部署 | Shopify CLI；本地开发使用临时 HTTPS 隧道 |
+| Runtime | Node.js `>=22.19`, TypeScript, npm |
+| Web app | React 18, React Router 7 (server `loader`/`action`), Vite 7 |
+| Shopify integration | Official `@shopify/shopify-app-react-router`, OAuth/session storage, App Bridge, Admin GraphQL API |
+| Admin UI | Embedded Shopify admin + Shopify Web Components (`s-*`) |
+| Data | Prisma 6 + PostgreSQL (local dev points at Supabase). Stores sessions, multi-location daily inventory snapshots, inventory-change events, daily sales, reorder decisions, per-decision audit trail, suppliers & terms, purchase plans, analytics/feedback events and a sync-job ledger |
+| Background jobs | Separate Node worker (`worker/index.ts`) + node-cron, decoupled from the web process |
+| Inventory analysis | Shopify Admin GraphQL + deterministic TypeScript calculations |
+| Dev / deploy | Shopify CLI; ephemeral HTTPS tunnel for local dev |
 
-主要代码入口：
+Full architecture, data flow, deployment topology and production gaps:
+[architecture & deployment](./docs/architecture-and-deployment.md) ·
+[detailed design](./docs/detailed-design.md) ·
+[beta plan](./docs/beta-plan.md) ·
+[release runbook](./docs/release-runbook.md) ·
+[stage reports](./docs/reports).
 
-- `app/shopify.server.ts`：Shopify 应用、Admin API 认证和 Prisma session storage；使用离线 access token（`useOnlineTokens: false`），使 worker、定时任务和 webhook 能在商家不在场时调用 Admin API。
-- `app/routes/app._index.tsx`：库存优化工作台首页，引导商家进入库存诊断。
-- `app/routes/app.copy.tsx`：单商品文案生成、预览及确认写回。
-- `app/routes/app.history.tsx`：当前店铺最近 100 条文案任务。
-- `app/routes/app.settings.tsx`：模型配置状态和连接测试。
-- `app/features.ts`：产品功能开关；`PRODUCT_COPY_ENABLED` 默认关闭，重新开放文案功能时设为 `true`。
-- `app/routes/app.tsx`、`app/styles/app-shell.css`：店铺内统一导航、当前店铺标识和响应式工作台布局。
-- `app/routes/app.inventory.tsx`、`app/routes/app.data-health.tsx`、`app/inventory.server.ts`：StockPilot 库存地点选择、手动同步、六态 Action Board、每日快照与销量重算、库存诊断、补货决策与 dashboard 数据。
-- `app/sync-jobs.server.ts`：把所有同步登记进 `DataSyncJob` 台账，并提供并发去重和「最后一次成功时间」。
-- `app/lib/`：纯计算与规则模块（无 I/O、可单测）。`inventory-calculations.ts` 算 Observed Demand 与补货公式，`reorder-confidence.ts` 算置信度与降信原因，`data-health.ts` 算检查清单与暂停判定，`reorder-action-board.ts` 算六态归类与采纳率，`reorder-export.ts` 序列化 CSV，`reorder-recommendations.ts` 定决策状态与审计映射。**新增纯逻辑模块请放 `app/lib/`：`app/` 根下的模块名会占用 `/app/<name>` 这条 URL，把 SSR 页面吞成 JS 模块。**
-- `app/pi.server.ts`：隔离的 Pi agent session、模型调用及输出校验。
-- `app/db.server.ts`、`prisma/schema.prisma`：数据库连接、Shopify session、`ProductDraft` 和 StockPilot 数据模型。
-- `worker/index.ts`：后台 worker，按 cron 抓全店多地点每日快照并重建销量窗口。
-- `app/webhook-sync.server.ts` 与 `app/routes/webhooks.*.tsx`：卸载、权限更新、隐私合规 Webhook，以及 `inventory_levels/update`、`orders/create`、`orders/cancelled` 增量同步。
-- `shopify.app.toml`、`shopify.web.toml`：唯一 Shopify 应用配置和本地 web process 命令。
+## Key entry points
 
-## 已实现功能与流程
+- [`app/shopify.server.ts`](../app/shopify.server.ts) — app config, Admin auth and Prisma session storage. Uses **offline** access tokens (`useOnlineTokens: false`) so the worker, crons and webhooks can call the Admin API when the merchant is absent.
+- [`app/routes/app.tsx`](./app/routes/app.tsx) — in-app shell: navigation, current-store identity, and the top-level `ErrorBoundary`.
+- [`app/routes/app._index.tsx`](./app/routes/app._index.tsx) — home dashboard built from real data (metrics, most urgent advice, Data Health summary, recent decisions).
+- [`app/routes/app.inventory.tsx`](./app/routes/app.inventory.tsx) + [`app/inventory.server.ts`](./app/inventory.server.ts) — location selection, manual sync, the six-state Action Board, daily snapshot & sales rebuild, inventory diagnosis, reorder decisions and dashboard data.
+- [`app/routes/app.suppliers.tsx`](./app/routes/app.suppliers.tsx) + [`app/suppliers.server.ts`](./app/suppliers.server.ts) — supplier profiles and per-variant supply terms (MOQ, lead time, unit cost).
+- [`app/routes/app.purchase-plans.tsx`](./app/routes/app.purchase-plans.tsx) + [`app/purchase-plans.server.ts`](./app/purchase-plans.server.ts) — merge accepted advice into plans, edit quantities/dates, run the plan status machine, export a plan CSV.
+- [`app/routes/app.data-health.tsx`](./app/routes/app.data-health.tsx) — actionable checklist of data gaps that gate trust in the advice.
+- [`app/routes/app.settings.tsx`](./app/routes/app.settings.tsx) — replenishment parameters (lead time, safety stock, review period) with validated, source-tracked writes.
+- [`app/routes/app.docs.tsx`](./app/routes/app.docs.tsx) — guide & feedback entry.
+- [`app/routes/health.tsx`](./app/routes/health.tsx) — `/health` liveness endpoint; returns `503` when the database ping fails.
+- [`app/features.ts`](./app/features.ts) — product feature flags.
+- [`app/lib/`](./app/lib) — pure, I/O-free, unit-tested logic: `inventory-calculations.ts` (Observed Demand + reorder formula), `reorder-confidence.ts` (confidence & downgrade reasons), `data-health.ts` (checks & pause rule), `reorder-action-board.ts` (six-state classification + adoption rate), `reorder-recommendations.ts` (decision status & audit mapping), `reorder-export.ts` / `purchase-plan-export.ts` (CSV), `supplier-validation.ts`, `settings-validation.ts`, `analytics.ts`, `onboarding.ts`, `sync-job-policy.ts`, `app-error.ts` / `route-error.ts` (safe error channel). **New pure logic belongs here: a module at `app/` root would occupy the `/app/<name>` URL and shadow an SSR route.**
+- [`app/db.server.ts`](./app/db.server.ts) + [`prisma/schema.prisma`](../prisma/schema.prisma) — DB client and data models.
+- [`worker/index.ts`](../worker/index.ts) — background worker: cron-driven all-location daily snapshots and sales-window rebuild.
+- [`app/webhook-sync.server.ts`](./app/webhook-sync.server.ts) + [`app/routes/webhooks.*.tsx`](./app/routes) — uninstall / scopes-update / privacy-compliance webhooks, plus incremental `inventory_levels/update`, `orders/create` and `orders/cancelled` recompute.
+- [`shopify.app.toml`](../shopify.app.toml) — the single Shopify app configuration.
 
-1. Shopify OAuth 完成后，通过官方库以离线 access token 认证 Admin 请求并保存店铺级 session，供后台 worker 与 webhook 复用。
-2. 页面从 Admin GraphQL 读取按标题排序的前 50 个商品供选择。
-3. 店铺所有者可发起模型连接测试；测试只验证一次服务端模型请求，不创建商品草稿。模型凭据从 `PI_API_KEY`、`PI_PROVIDER`、`PI_MODEL` 读取，不会返回浏览器或保存到数据库。
-4. 生成时重新读取选中商品，将标题和描述传给隔离的 Pi SDK 临时 session；session 不启用文件、命令或其他 agent 工具。
-5. Zod 校验模型返回的严格 JSON（标题 1–255 字符、描述 1–20,000 字符）；验证通过后才把建议与原始内容保存为草稿。生成请求以商店和 request ID 唯一约束防止重复提交。
-6. 确认写回时用数据库条件更新抢占待处理草稿，再重新读取 Shopify 商品；若商品已变化则标记冲突并拒绝覆盖。重复确认已应用的草稿不会再次发起商品更新。
-7. 应用卸载与商店删除 webhook 共用 `purgeShopBusinessData()`，按 `shop` 删除该商店的全部业务数据（含 `RecommendationAudit` 审计流水）并在日志记录每张表的行数；权限更新时更新 session scope。客户数据请求/删除 Webhook 当前只记录事件，因为本应用不存储客户数据。
+## Replenishment & decision loop
 
-## StockPilot 库存诊断与补货闭环
+The merchant picks an active inventory location on `/app/inventory` and syncs. The app
+reads active variants, sellable/incoming stock at that location, and paid orders across
+the store. After sync, each variant shows 30/60/90-day sales, coverage days, projected
+stockout date, risk status and reorder advice — with the calculation basis visible.
 
-商家在 `/app/inventory` 选择一个 active 库存地点并手动同步。系统读取 active 商品变体、该地点可售/在途库存，以及全店已支付订单；同步完成后可查看 30/60/90 天销量、库存覆盖天数、预计缺货日期、风险状态及补货建议，并显示计算依据。
+Every variant with advice greater than `0` automatically enters `pending`. The merchant
+works the six-state **Action Board** (`All` / `Pending` / `Accepted` / `Edited` /
+`Ignored` / `Ordered`, plus `Paused` when data is unhealthy): accept, adjust quantity,
+ignore, or mark ordered. Decisions persist per shop + location + variant, and **every
+change appends a `RecommendationAudit` row in the same transaction** (from/to status,
+suggested vs. confirmed quantity, confidence snapshot, operator). Because sessions are
+offline, the audit distinguishes only `system` (sync-registered) from `merchant`
+(in-app actions) — it never claims to identify a specific employee.
 
-同步后所有建议量大于 0 的变体自动进入 `pending`，商家在六态 Action Board（`All` / `Pending` / `Accepted` / `Edited` / `Ignored` / `Ordered`，加上数据异常时的 `Paused`）上逐条处理：接受、调整数量、忽略或在接受后标记已采购。决策按店铺、库存地点和商品变体持久化，**每一次变更都在同一事务里追加一行 `RecommendationAudit`**（前/后态、建议量/确认量、置信度快照、操作者），页面下方可直接查看流水。因为使用离线 session，审计只能区分 `system`（同步登记）和 `merchant`（应用内操作），不声称识别到具体员工。标记已采购仅更新应用内状态，不会创建 Shopify 采购订单或改动 Shopify 库存。
+Two safeguards shipped in the beta:
 
-每条建议带一个 Reorder Confidence 徽章（high / medium / low）和可展开的降信原因：销售历史不完整、快照不是今天、无销量样本、缺成本等会拉低置信度；置信度只回答“该不该信这个数字”，不改变建议量。看板可一键导出 27 列 CSV 补货计划（含地点、变体、销量、可售/在途、建议量、置信度与降信原因），供线下与供应商沟通使用。
+- **Decision reason** — adjust/ignore capture a short merchant rationale, stored with
+  the current decision and its audit row.
+- **Request-level idempotency** — each row carries a hidden `requestKey` (UUID) backed
+  by a unique index on `RecommendationAudit.requestKey`. A double-submit replays the
+  same key and hits the unique constraint (`P2002`), which is detected and returned
+  without writing a duplicate audit entry; a fresh key is issued after each success.
+  Deliberate consecutive decisions are each recorded — that is intended, not a bug.
 
-计算由确定性代码执行：Observed Demand = 窗口内销量 ÷ 可见样本天数（**不用窗口天数做分母**，避免把权限或数据缺口读成“销量变低”）；补货点 = 日均 ×（默认交期 + 安全库存天数）；目标库存 = 日均 ×（交期 + 检查周期 + 安全天数）；建议补货量 = max(0, 目标库存 - 可售库存 - 在途库存)。初始交期为 14 天、安全库存为 7 天、检查周期为 14 天，均是系统估算值。AI 不决定库存状态或采购数量。
+Each suggestion carries a **Reorder Confidence** badge (high / medium / low) with
+expandable downgrade reasons (incomplete sales history, stale snapshot, no sales
+sample, missing cost). Confidence answers "how much to trust this number"; it never
+changes the quantity. The board exports a 27-column reorder CSV (with a UTF-8 BOM so
+Excel opens CJK fields correctly) for offline supplier communication.
 
-销量口径为 Shopify `processedAt` 日期内、未取消且财务状态为已支付、部分退款或已退款的订单商品数量；退款/退货数量不扣减。库存仅对应所选地点，销量是全店汇总。Shopify 默认只允许读取最近 60 天订单；90 天销量与长期滞销判断需要 Shopify 批准并实际授权 `read_all_orders`，否则页面会明确标记历史不完整。商品成本还受 Shopify 用户“查看商品成本”权限影响，缺失成本时库存价值是不完整估算。
+**The math is deterministic:** Observed Demand = sales in window ÷ visible sample days
+(**not** ÷ window days, so a permission or data gap is never read as "demand dropped");
+reorder point = daily rate × (lead time + safety days); target stock = daily rate ×
+(lead time + review period + safety days); suggested quantity = max(0, target − sellable
+− incoming). Defaults are lead time 14, safety stock 7, review period 14 days — all
+system estimates. Sales are counted by Shopify `processedAt` date for orders that are
+not cancelled and are financially paid, partially refunded or refunded; refunds/returns
+are not subtracted. Inventory is per selected location; sales are store-wide. Shopify
+grants only the last 60 days of orders unless `read_all_orders` is approved and
+authorized, in which case 90-day history and long-dormant detection become available;
+otherwise the UI marks history as incomplete. Product cost also depends on the Shopify
+user's "view product costs" permission, so missing cost yields an incomplete value estimate.
 
-`/app/data-health` 把上面这些缺口做成可行动的检查清单（授权、主地点、快照新鲜度、销量历史、同步失败、商品成本）。只有阻断建议的 critical 项（主地点缺失、无快照或快照超过 48 小时、连续 2 次同步失败）会把看板置为 `paused`：页面仍可读，但**服务端会重算并拒绝任何接受/调整/忽略/已采购操作**，避免用过期数据订货；按钮置灰只是体验，不是约束本身。
+## Suppliers & purchase plans (now implemented)
 
-数据地基已就位：每日快照为时间序列（同一地点×变体每天一行）、库存变化写入 `InventoryEvent` 事件流、每次同步登记 `DataSyncJob`；后台 worker 按 cron 跑全地点快照与销量重建，`inventory_levels/update` 与 `orders/*` webhook 做增量重算。尚未做的是：同步队列与失败重试面板、多地点需求分析、供应商/MOQ、采购计划审批与 Shopify 采购单。大店数据量下需先完善队列与重试，再用于生产运营。
+- **Suppliers** (`/app/suppliers`): supplier profiles and per-variant supply terms — MOQ,
+  lead time and unit cost. Supplier lead time takes precedence over store-wide defaults,
+  and suggested quantities round up to MOQ.
+- **Purchase Plans** (`/app/purchase-plans`): accepted advice is merged into a plan,
+  quantities and dates are editable, and the plan runs a status machine
+  (`open → ordered / cancelled`). Marking a plan ordered writes the audit using the
+  **real plan-line quantity** and tags the operator as `system` (a system-driven flow,
+  not a merchant row action), and the plan exports its own CSV.
 
-## 首页与任务导航
+**Supply Chain** (`/app/supply-chain`) is a placeholder — segmented lead times and
+supplier shutdown calendars are coming soon and are not yet implemented.
 
-当前应用导航以库存优化为主，首页直接展示真实看板数据：指标卡、最紧急的几条建议、Data Health 摘要和最近决策流水都来自 `getInventoryDashboard` / `getRecentRecommendationAudit`；尚未实现的能力（批量文案、多语言、SEO、供应商与采购计划等）只标记“Not enabled yet”，不展示编造的示例数字。文案生成与历史记录页面由 `PRODUCT_COPY_ENABLED` 功能开关控制；开关关闭时，相关入口不显示，直接访问页面或提交操作会返回库存优化页，现有路由代码和草稿数据不删除。Settings 已改为独立的一级菜单，不再受该开关拦截。后续准备重新开放时，在 `app/features.ts` 将该常量设为 `true`，并重新验证模型配置与生成写回流程。店铺切换和 Shopify 账号入口由 Shopify Admin 原生外壳提供。
+## Data health & guardrails
 
-供应商管理和采购计划当前作为后续规划方向展示，不代表相应功能已实现。
+`/app/data-health` turns the gaps above into an actionable checklist (authorization,
+primary location, snapshot freshness, sales history, sync failures, product costs).
+Only **critical** items that block advice (missing primary location, no snapshot or a
+snapshot older than 48 hours, two consecutive sync failures) put the board into
+`paused`: the page stays readable, but the **server recomputes and rejects any
+accept/adjust/ignore/mark-ordered action** so stale data can't drive an order. Disabled
+buttons are just UX; the server-side rejection is the actual guardrail.
 
-## 本地开发
+Sync is **non-destructive**: it rebuilds only the window it actually re-reads and
+preserves prior demand when orders come back empty or limited, so a single unreadable
+sync can no longer wipe a merchant's demand evidence.
 
-先安装 Node.js、npm、Shopify CLI，并准备 Dev Dashboard 应用、开发商店和模型 API key。
+## Analytics, feedback & onboarding
+
+Product telemetry, first-run onboarding state and both row-level and store-level
+feedback are captured as events and surfaced on the home dashboard and Docs page —
+using real recorded data only, never fabricated sample numbers.
+
+## Error handling across SSR/hydration
+
+Read loaders are wrapped by `safeLoader`, which folds a thrown error into a
+serializable, classified `Response` (validation / auth / database / shopify_api /
+unknown; retryable kinds map to `503`, others to `500`). The top-level `ErrorBoundary`
+reads that payload so the server error kind survives hydration without masking the
+cause or producing hydration mismatches.
+
+## Data isolation & compliance
+
+App uninstall and shop redact share `purgeShopBusinessData()`, which deletes every
+business-data row for that shop (including the `RecommendationAudit` trail) keyed by
+`shop`, and logs per-table counts. Scopes-update refreshes the session scope. Customer
+data-request / redact webhooks currently only log, because the app stores no customer
+data.
+
+## Local development
+
+Prerequisites: Node.js, npm, Shopify CLI, a Dev Dashboard app, a development store, and
+a PostgreSQL database.
 
 ```sh
 npm install
 cp .env.example .env
 ```
 
-在 `.env` 写入 PostgreSQL 连接串 `DATABASE_URL`（本地开发指向 Supabase，需带 `?sslmode=require`）；Supabase 直连 5432 对 HTTPS 代理/透明网关类工具敏感，本机开着这类代理时会报 `P1001`。
-
-在 `.env` 设置 `PI_API_KEY`；默认模型为 `openai/gpt-4.1-mini`，可用 `PI_PROVIDER`、`PI_MODEL` 覆盖。密钥只供服务器模型调用使用，不要提交 `.env` 或把密钥贴入聊天/浏览器。
-
-页面中的“测试模型连接”会实际调用模型，可能产生 Provider 费用；按钮仅对 Shopify 在线会话中标记为店铺所有者的用户开放。模型请求有 90 秒超时。认证失败、限流、模型不可用和无效 JSON 会显示明确错误；生成失败或输出无效时不会保存建议内容。
-
-应用流程仍将 AI 草稿生成与 Shopify 写回分开。确认写回前会检查原商品是否被其他人修改；发生冲突时需要重新生成草稿。PostgreSQL 中的 `generating` / `pending` / `applying` / `applied` / `failed` / `conflicted` 状态用于避免重复生成和重复写回。
-
-> ⚠️ 切到离线 token 后，`session.onlineAccessInfo` 不再可用，Settings 页依赖「店铺所有者」判定的“测试模型连接”会一直拒绝，直到文案功能重新设计权限判定为止。
-
-当前 `shopify.app.toml` 已绑定应用 `mypi`。如需更换绑定，可运行 `npm run config:link`；随后运行：
+- Set `DATABASE_URL` in `.env` to your PostgreSQL connection string. Local dev uses the
+  Supabase **session pooler** URI with `?sslmode=require`; the direct `db.<ref>.supabase.co`
+  endpoint is IPv6-only and fails with `P1001` from an IPv4-only network. A local
+  transparent/HTTPS proxy can hijack the pooler DNS to a fake IP and break connects —
+  disable it, or route around it, if `P1001` appears.
+- The app is bound to `mypi` in `shopify.app.toml`. To re-link, run `npm run config:link`.
 
 ```sh
 npm run dev
 ```
 
-Shopify CLI 会运行 Prisma 生成/迁移、启动开发隧道并输出 Admin 预览链接。当前应用请求 `read_products`、`write_products`、`read_inventory`、`read_orders` 和 `read_locations`。权限变更后，测试商店需要重新授权。当前未请求受限的 `read_all_orders`，因此销量仅按最近 60 天计算，90 天销量/长期滞销数据不可用。
+Shopify CLI runs Prisma generate/migrate, starts the dev tunnel and prints the admin
+preview link. Current requested scopes are `read_products`, `read_inventory`,
+`read_orders`, `read_locations`. After any scope change the test store must re-authorize.
+`read_all_orders` is **not** requested, so sales are limited to the last 60 days.
 
-常用检查：
+Background worker (pull env first with `shopify app env pull` to get
+`SHOPIFY_API_KEY` / `SHOPIFY_API_SECRET` / `SHOPIFY_APP_URL` / `SCOPES`):
+
+```sh
+npm run worker
+```
+
+On start the worker runs one catch-up snapshot + sales rebuild, then schedules by
+`WORKER_SNAPSHOT_CRON` (default: minute 15 every hour) and `WORKER_SALES_CRON`
+(default: 03:00 daily); both are overridable in `.env`. Webhook and cron paths require an
+offline session: after switching to `useOnlineTokens: false` the test store must
+re-authorize once, otherwise the session table has no offline record and both the worker
+and webhooks get an empty session.
+
+### Checks
 
 ```sh
 npm run typecheck
@@ -105,22 +199,24 @@ npm run build
 shopify app config validate --json
 ```
 
-跑后台 worker（需先从 `shopify app env pull` 取得 `SHOPIFY_API_KEY`/`SHOPIFY_API_SECRET`/`SHOPIFY_APP_URL`/`SCOPES`）：
+## Current boundaries & next phase
 
-```sh
-npm run worker            # esbuild 打包后常驻跑 cron
-```
+- Product selection surfaces the first 50 active variants; pagination/search/filter are
+  still to come.
+- The board reads the latest snapshot day for the selected location only; store-wide
+  multi-location demand analysis is not implemented. Sales are store-wide and not
+  attributed per location; refunds/returns are not subtracted.
+- Suppliers, purchase plans and CSV export are live; Shopify-native purchase-order
+  creation, plan approval workflows, sync-queue/retry panels and segmented supply-chain
+  lead times are not.
+- Unit tests cover configuration, secret non-leakage, output validation, error
+  classification, and every pure module in `app/lib/` (118 tests). Real model calls and
+  product write-back for the dormant copy feature still need end-to-end verification
+  before that feature is re-enabled.
+- Data runs on PostgreSQL (Supabase locally), but production HTTPS domain, platform
+  secrets and worker orchestration are not finalized: the current `Dockerfile` runs only
+  the web service. Secret management, monitoring, privacy policy, billing and App Store
+  review prep remain before a production launch.
 
-worker 启动时会先补跑一次快照与销量重建，之后按 `WORKER_SNAPSHOT_CRON`（默认每小时第 15 分）和 `WORKER_SALES_CRON`（默认每天 03:00）调度；定时表达式可用 `.env` 覆盖。
-
-## 当前边界与下一阶段
-
-- 商品选择目前最多显示 50 个商品；后续可加入分页、搜索和筛选。
-- StockPilot 已支持多地点数据模型与每日快照时间序列，但看板仍只看所选地点的最新快照日；补货决策可在应用内接受、调整、忽略或标记已采购，并留下审计流水与 CSV 导出，但不包含多地点需求分析、供应商/MOQ、采购计划审批或 Shopify 采购单。
-- StockPilot 的销量是全店订单销量，不按库存地点归因；退款/退货没有从销量中扣减。
-- 自动化单元测试覆盖配置、密钥不泄漏、Zod 输出边界、错误归类和超时取消；`app/lib/` 下每个纯逻辑模块（库存计算、置信度、Data Health、六态归类、CSV 导出、决策状态）都有对应单测。真实 Provider 调用仍需配置有效的本地 `PI_API_KEY` 后验证。
-- 库存链路已在开发商店跑通一次实跑：全量同步→登记 pending→接受/调整/忽略/已采购四类决策与审计→采纳率计算→CSV 导出；并把时钟拨到 +52h 验证快照过期会进入 `paused` 且导出行带上暂停原因。注意开发商店若没有可用库存（应用不申请 `write_inventory`，无法手改现存量），建议会全部落进 `stockout`。商品文案真实模型调用和商品写回也仍需端到端验收，写回前必须由商家明确确认。
-- 数据已切到 PostgreSQL（本地开发用 Supabase），但尚未配置生产 HTTPS 域名、平台 secret 和 `PI_API_KEY`。正式部署前还要把 worker 纳入镜像/编排（目前 `Dockerfile` 只跑 Web 服务），并补齐 secret 管理、监控、隐私政策、计费及 App Store 审核准备。
-- webhook 增量与 cron 需要 offline session：切到 `useOnlineTokens: false` 后必须让测试商店重新授权一次，否则 session 表里没有 offline 记录，worker 和 webhook 都会拿到空 session。
-
-本项目目前是开发/测试用 MVP，不应将临时开发隧道直接用于多副本生产部署。
+mypi is currently a development/beta build; the ephemeral dev tunnel must not be used
+for multi-replica production deployments.
