@@ -207,7 +207,6 @@ export async function withModelTimeout<T>(
       timedOut = true;
       reject(new ProductCopyError("timeout"));
     }, timeoutMs);
-    timer.unref?.();
   });
 
   try {
