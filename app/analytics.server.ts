@@ -6,13 +6,21 @@
 import type { Prisma } from "@prisma/client";
 import db from "./db.server";
 import { AppError } from "./lib/app-error";
+import { createLogger } from "./lib/logger";
 import {
+  collectActiveUtcDays,
+  computeBetaMetrics,
+  earliestInstallAt,
+  isRetainedOnDay,
+  isWeeklyActiveShop,
   resolveFeedbackChoice,
   shouldTrackToday,
   validateFeedbackComment,
   type AdviceFeedbackReason,
   type AdviceFeedbackVerdict,
   type AnalyticsEventType,
+  type AnalyticsEventRow,
+  type BetaMetrics,
 } from "./lib/analytics";
 
 /** 记一条事件。fire-and-forget：失败只进日志。 */
@@ -31,7 +39,7 @@ export function trackEvent(
     })
     .catch((error: unknown) => {
       // 原始错误只进服务端日志，不下发浏览器。
-      console.error("[mypi] analytics track failed", { shop, type, error });
+      createLogger({ shop }).error("analytics track failed", { type, error });
     });
 }
 
@@ -45,7 +53,7 @@ export async function ensureInstallTracked(shop: string): Promise<void> {
     if (existing) return;
     trackEvent(shop, "app_installed");
   } catch (error) {
-    console.error("[mypi] install tracking failed", { shop, error });
+    createLogger({ shop }).error("install tracking failed", { error });
   }
 }
 
@@ -61,7 +69,7 @@ export async function trackDailyVisit(shop: string): Promise<void> {
     if (!shouldTrackToday(last?.createdAt ?? null, now)) return;
     trackEvent(shop, "dashboard_viewed");
   } catch (error) {
-    console.error("[mypi] visit tracking failed", { shop, error });
+    createLogger({ shop }).error("visit tracking failed", { error });
   }
 }
 
@@ -150,4 +158,47 @@ export async function getLatestFeedbackByVariant(
     });
   }
   return latest;
+}
+
+export type ShopBetaMetrics = {
+  metrics: BetaMetrics;
+  installedAt: Date | null;
+  weeklyActive: boolean;
+  /** 安装日算第 0 天；未安装事件时为 null（不冒充流失）。 */
+  retainedDay7: boolean | null;
+  retainedDay30: boolean | null;
+  /** 参与计算的事件总数，供页面标注「样本量」，小样本时不夸大。 */
+  eventCount: number;
+};
+
+/**
+ * 只读聚合**当前这家店**的 Beta 指标——绝不跨店，商家永远看不到别家数据。
+ * 全部走 lib/analytics 的纯函数，公式与采集口径同源；没有的事件一律回落 null，不编造。
+ */
+export async function getShopBetaMetrics(
+  shop: string,
+  now: Date = new Date(),
+): Promise<ShopBetaMetrics> {
+  const rows = await db.analyticsEvent.findMany({
+    where: { shop },
+    orderBy: { createdAt: "asc" },
+    select: { type: true, props: true, createdAt: true },
+  });
+  const events: AnalyticsEventRow[] = rows.map((row) => ({
+    type: row.type as AnalyticsEventType,
+    props: (row.props as Record<string, unknown> | null) ?? null,
+    createdAt: row.createdAt,
+  }));
+
+  const installedAt = earliestInstallAt(events);
+  const activeDays = collectActiveUtcDays(events);
+
+  return {
+    metrics: computeBetaMetrics(events, installedAt),
+    installedAt,
+    weeklyActive: isWeeklyActiveShop(events, now),
+    retainedDay7: isRetainedOnDay(installedAt, activeDays, 7),
+    retainedDay30: isRetainedOnDay(installedAt, activeDays, 30),
+    eventCount: events.length,
+  };
 }

@@ -4,6 +4,7 @@ import {
   SHOPIFY_API_UNAVAILABLE_MESSAGE,
   describeError,
 } from "./app-error.ts";
+import { createLogger } from "./logger.ts";
 import {
   classifyThrownDetail,
   isAccessError,
@@ -94,14 +95,11 @@ export async function adminGraphql<T>(
   const waitMs = throttleWaitMs(cost);
   if (cost && (cost.throttled || (cost.nextWaitEstimate ?? 0) > 0)) {
     // 留一条可观测线索；官方客户端已在本次调用内做过退避。
-    console.warn(
-      "[adminGraphql] Shopify reported throttling",
-      JSON.stringify({
-        throttled: cost.throttled ?? null,
-        throttleStatus: cost.throttleStatus ?? null,
-        nextWaitEstimate: cost.nextWaitEstimate ?? null,
-      }),
-    );
+    createLogger().warn("adminGraphql: Shopify reported throttling", {
+      throttled: cost.throttled ?? null,
+      throttleStatus: cost.throttleStatus ?? null,
+      nextWaitEstimate: cost.nextWaitEstimate ?? null,
+    });
   }
   // 确实被节流时，按 Shopify 的动态估算主动等待（封顶 5s）再返回，
   // 让分页循环里的下一次请求自然让路，避免连续请求把配额一次性打空。

@@ -181,6 +181,59 @@ export function isRetainedOnDay(
   return activeDays.some((day) => isSameUtcDay(day, target));
 }
 
+/** 从事件行里取每个 UTC 天的首次活跃快照（以 dashboard_viewed 为心跳），去重到天粒度。 */
+export function collectActiveUtcDays(events: AnalyticsEventRow[]): Date[] {
+  const seen = new Set<string>();
+  const days: Date[] = [];
+  for (const event of events) {
+    if (event.type !== "dashboard_viewed") continue;
+    const key = event.createdAt.toISOString().slice(0, 10);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    days.push(event.createdAt);
+  }
+  return days;
+}
+
+/** 最早一条 app_installed 的 UTC 时刻；老店埋点上线前装的返回 null，指标不猜锚点。 */
+export function earliestInstallAt(events: AnalyticsEventRow[]): Date | null {
+  let earliest: Date | null = null;
+  for (const event of events) {
+    if (event.type !== "app_installed") continue;
+    if (!earliest || event.createdAt.getTime() < earliest.getTime()) {
+      earliest = event.createdAt;
+    }
+  }
+  return earliest;
+}
+
+/**
+ * 把毫秒数折成商家看得懂的时长（最多两个单位，如 "2d 3h" / "12m 5s"）。
+ * null / 负数（异常锚点）统一给 "—"，绝不显示假数字。
+ */
+export function humanizeDurationMs(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms) || ms < 0) return "—";
+  const totalSeconds = Math.floor(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const units: [number, string][] = [
+    [Math.floor(totalSeconds / 86400), "d"],
+    [Math.floor((totalSeconds % 86400) / 3600), "h"],
+    [Math.floor((totalSeconds % 3600) / 60), "m"],
+    [totalSeconds % 60, "s"],
+  ];
+  const present = units.filter(([value]) => value > 0);
+  return present
+    .slice(0, 2)
+    .map(([value, label]) => `${value}${label}`)
+    .join(" ");
+}
+
+/** 比例折成百分比字符串；null（无分母）给 "—"，不显示 0% 冒充"算出来是零"。 */
+export function formatRate(rate: number | null): string {
+  if (rate === null || !Number.isFinite(rate)) return "—";
+  return `${Math.round(rate * 100)}%`;
+}
+
 /* ---------------- 反馈取值 ---------------- */
 
 export type AdviceFeedbackVerdict = "useful" | "not_useful";

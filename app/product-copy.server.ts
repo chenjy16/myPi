@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createLogger } from "./lib/logger.ts";
 
 export const MODEL_REQUEST_TIMEOUT_MS = 90_000;
 
@@ -218,7 +219,7 @@ export async function withModelTimeout<T>(
       await onTimeout();
     } catch (abortError) {
       const { name } = getErrorDetails(abortError);
-      console.error("Failed to abort timed-out Pi request", { name });
+      createLogger().error("failed to abort timed-out Pi request", { name });
     }
     throw new ProductCopyError("timeout");
   } finally {

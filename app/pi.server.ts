@@ -19,6 +19,7 @@ import {
   withModelTimeout,
   type ProductCopySuggestion,
 } from "./product-copy.server";
+import { createLogger } from "./lib/logger";
 
 type ProductCopyInput = {
   title: string;
@@ -145,7 +146,7 @@ async function promptSession(
           await session.abort();
         } catch (error) {
           const name = error instanceof Error ? error.name : "UnknownError";
-          console.error("Failed to abort timed-out Pi request", { name });
+          createLogger().error("failed to abort timed-out Pi request", { name });
         }
       },
     );

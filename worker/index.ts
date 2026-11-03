@@ -9,21 +9,22 @@
  * 一次安装授权；每次执行都登记进 DataSyncJob 台账，同店同类型任务不会并发重跑。
  */
 import "dotenv/config";
+import { createLogger } from "../app/lib/logger";
 
 /** 快照节奏：每小时第 15 分钟。同日重复抓是 upsert，天然幂等且能让当日数据保持新鲜。 */
 const SNAPSHOT_CRON = process.env.WORKER_SNAPSHOT_CRON ?? "15 * * * *";
 /** 销量重建节奏：默认每天 03:00（UTC）。 */
 const SALES_CRON = process.env.WORKER_SALES_CRON ?? "0 3 * * *";
 
+// worker 侧一条绑定了 component 的结构化 logger；log/logError 只是保留原调用签名的薄封装。
+const logger = createLogger({ component: "worker" });
+
 function log(message: string, detail?: unknown): void {
-  console.log(`[worker ${new Date().toISOString()}] ${message}`, detail ?? "");
+  logger.info(message, detail === undefined ? undefined : { detail });
 }
 
 function logError(message: string, error: unknown): void {
-  console.error(
-    `[worker ${new Date().toISOString()}] ${message}`,
-    error instanceof Error ? error.message : String(error),
-  );
+  logger.error(message, { error });
 }
 
 /** 优雅退出所需的两类句柄：cron 排程（stop 后不再触发新任务）与共享 Prisma 池（disconnect 释放连接）。 */

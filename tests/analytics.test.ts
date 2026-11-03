@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   ANALYTICS_EVENT_TYPES,
+  collectActiveUtcDays,
   computeBetaMetrics,
   decisionEventType,
+  earliestInstallAt,
+  formatRate,
+  humanizeDurationMs,
   isAnalyticsEventType,
   isRetainedOnDay,
   isWeeklyActiveShop,
@@ -142,4 +146,48 @@ test("反馈备注：空为 null、500 字内通过、超长给 undefined", () =
   );
   const long = "x".repeat(501) as FormDataEntryValue;
   assert.equal(validateFeedbackComment(long), undefined);
+});
+
+test("earliestInstallAt 取最早一条安装；没有安装事件返回 null 不猜锚点", () => {
+  assert.equal(earliestInstallAt([]), null);
+  assert.equal(
+    earliestInstallAt([event("dashboard_viewed", new Date("2026-01-05T00:00:00Z"))]),
+    null,
+  );
+  const events = [
+    event("app_installed", new Date("2026-01-10T09:00:00Z")),
+    event("app_installed", new Date("2026-01-03T01:00:00Z")),
+  ];
+  assert.equal(earliestInstallAt(events)?.toISOString(), "2026-01-03T01:00:00.000Z");
+});
+
+test("collectActiveUtcDays 按 UTC 天去重，且只认 dashboard_viewed 心跳", () => {
+  const events = [
+    event("dashboard_viewed", new Date("2026-02-01T03:00:00Z")),
+    event("dashboard_viewed", new Date("2026-02-01T22:00:00Z")), // 同一天，应被去掉
+    event("dashboard_viewed", new Date("2026-02-02T05:00:00Z")),
+    event("sync_completed", new Date("2026-02-03T05:00:00Z")), // 非心跳，不计
+  ];
+  const days = collectActiveUtcDays(events);
+  assert.equal(days.length, 2);
+  assert.deepEqual(
+    days.map((d) => d.toISOString().slice(0, 10)),
+    ["2026-02-01", "2026-02-02"],
+  );
+});
+
+test("humanizeDurationMs 最多两个单位；null/负数一律破折号不编造", () => {
+  assert.equal(humanizeDurationMs(null), "—");
+  assert.equal(humanizeDurationMs(-5), "—");
+  assert.equal(humanizeDurationMs(45_000), "45s");
+  assert.equal(humanizeDurationMs(90_000), "1m 30s");
+  assert.equal(humanizeDurationMs(3_600_000), "1h");
+  assert.equal(humanizeDurationMs(2 * 86_400_000 + 3 * 3_600_000), "2d 3h");
+});
+
+test("formatRate 折百分比；null 分母给破折号而非 0%", () => {
+  assert.equal(formatRate(null), "—");
+  assert.equal(formatRate(0), "0%");
+  assert.equal(formatRate(0.5), "50%");
+  assert.equal(formatRate(0.333), "33%");
 });

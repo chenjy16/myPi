@@ -24,6 +24,7 @@ const NAV_ITEMS = [
   { to: "/app/suppliers", label: "Suppliers", glyph: "☐" },
   { to: "/app/supply-chain", label: "Supply Chain", glyph: "⛓" },
   { to: "/app/data-health", label: "Data Health", glyph: "✓" },
+  { to: "/app/metrics", label: "Beta Metrics", glyph: "▤" },
   { to: "/app/settings", label: "Settings", glyph: "⚙" },
 ];
 
