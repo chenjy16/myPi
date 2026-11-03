@@ -10,6 +10,7 @@ import {
 import { trackDailyVisit } from "../analytics.server";
 import { deriveOnboardingSteps } from "../lib/onboarding";
 import { safeLoader } from "../lib/route-error";
+import { buildSyncFreshnessNotice } from "../lib/sync-freshness";
 import type { DataHealthState, DataHealthTone } from "../lib/data-health";
 import {
   INVENTORY_STATUS_LABELS,
@@ -128,8 +129,15 @@ function formatDateTime(value: Date | null | undefined): string {
 export default function HomePage() {
   const { dashboard, recentDecisions, onboarding } =
     useLoaderData<typeof loader>();
-  const { settings, metrics, variants, dataHealth, board, snapshotDate } =
+  const { settings, metrics, variants, dataHealth, board, snapshotDate, syncStatus } =
     dashboard;
+  const freshness = buildSyncFreshnessNotice(syncStatus, {
+    lastSuccessLabel: syncStatus.lastSuccessfulSyncAt
+      ? formatDateTime(syncStatus.lastSuccessfulSyncAt)
+      : null,
+  });
+  const freshnessClass =
+    TONE_CLASS[freshness.tone === "muted" ? "ok" : freshness.tone];
   const advice = priorityRows(variants, 4);
   const topAdvice = advice[0];
   const reviewedCount =
@@ -430,10 +438,7 @@ export default function HomePage() {
               </span>
               <div>
                 <strong>{healthCopy.title}</strong>
-                <span>
-                  Last inventory sync:{" "}
-                  {formatDateTime(settings?.lastInventorySyncAt)}
-                </span>
+                <span className={freshnessClass}>{freshness.message}</span>
               </div>
             </div>
             <div className="dsHealthRows">

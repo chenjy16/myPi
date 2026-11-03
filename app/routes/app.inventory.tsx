@@ -21,7 +21,12 @@ import {
 import { INVENTORY_STATUS_LABELS } from "../lib/inventory-calculations";
 import { toSafeError } from "../lib/app-error";
 import { safeLoader } from "../lib/route-error";
-import { SyncAlreadyRunningError, hasRunningJob } from "../sync-jobs.server";
+import { buildSyncFreshnessNotice } from "../lib/sync-freshness";
+import {
+  SyncAlreadyRunningError,
+  hasRunningJob,
+  type SyncStatus,
+} from "../sync-jobs.server";
 import {
   getLatestFeedbackByVariant,
   saveAdviceFeedback,
@@ -410,6 +415,13 @@ function formatDate(value: Date | string | null): string {
     : "Not synced yet";
 }
 
+const SYNC_STATUS_LABELS: Record<SyncStatus["current"], string> = {
+  never: "Never synced",
+  running: "Syncing",
+  succeeded: "Up to date",
+  failed: "Last sync failed",
+};
+
 function formatRate(value: number | null): string {
   return value === null ? "—" : `${Math.round(value * 100)}%`;
 }
@@ -433,6 +445,7 @@ export default function InventoryPage() {
     dataHealth,
     board,
     snapshotDate,
+    syncStatus,
     auditTrail,
     canReadAllOrders,
     feedbackByVariant,
@@ -450,6 +463,11 @@ export default function InventoryPage() {
       ? fetcher.data.selectedLocationId
       : (settings?.locationId ?? "");
   const hasSyncData = Boolean(settings?.lastInventorySyncAt);
+  const freshness = buildSyncFreshnessNotice(syncStatus, {
+    lastSuccessLabel: syncStatus.lastSuccessfulSyncAt
+      ? formatDate(syncStatus.lastSuccessfulSyncAt)
+      : null,
+  });
   const currentIntent = fetcher.formData?.get("intent");
   const errorMessage =
     fetcher.data && "error" in fetcher.data ? fetcher.data.error : undefined;
@@ -551,12 +569,25 @@ export default function InventoryPage() {
             </s-button>
           </fetcher.Form>
         )}
+        {syncStatus.current === "failed" && (
+          <s-banner
+            tone={freshness.tone === "critical" ? "critical" : "warning"}
+            heading="Sync status"
+          >
+            <s-paragraph>{freshness.message}</s-paragraph>
+          </s-banner>
+        )}
+        <s-paragraph>
+          Current sync status: {SYNC_STATUS_LABELS[syncStatus.current]}; last
+          attempt {formatDate(syncStatus.lastSyncAttemptAt)}; last successful{" "}
+          {formatDate(syncStatus.lastSuccessfulSyncAt)}.
+        </s-paragraph>
         {settings && (
           <s-paragraph>
-            Last sync: {formatDate(settings.lastInventorySyncAt)}; snapshot date{" "}
-            {snapshotDate ?? "none"}; default lead time {settings.leadTimeDays}{" "}
-            days, safety stock {settings.safetyStockDays} days, purchase review
-            cycle {settings.reviewPeriodDays} days. These are system estimates.
+            Snapshot date {snapshotDate ?? "none"}; default lead time{" "}
+            {settings.leadTimeDays} days, safety stock{" "}
+            {settings.safetyStockDays} days, purchase review cycle{" "}
+            {settings.reviewPeriodDays} days. These are system estimates.
           </s-paragraph>
         )}
         {!canReadAllOrders && (

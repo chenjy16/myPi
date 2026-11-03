@@ -5,6 +5,7 @@ import { authenticate } from "../shopify.server";
 import { getInventoryDashboard } from "../inventory.server";
 import { recentJobs } from "../sync-jobs.server";
 import { safeLoader } from "../lib/route-error";
+import { buildSyncFreshnessNotice } from "../lib/sync-freshness";
 import type { DataHealthTone } from "../lib/data-health";
 
 /** 数据健康页：检查清单、恢复条件与同步台账，全部来自当前库内事实。 */
@@ -23,6 +24,7 @@ export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
   return {
     dataHealth: dashboard.dataHealth,
     settings: dashboard.settings,
+    syncStatus: dashboard.syncStatus,
     snapshotDate: dashboard.snapshotDate,
     historyDaysAvailable: dashboard.historyDaysAvailable,
     board: dashboard.board,
@@ -77,11 +79,17 @@ export default function DataHealthPage() {
   const {
     dataHealth,
     settings,
+    syncStatus,
     snapshotDate,
     historyDaysAvailable,
     board,
     jobs,
   } = useLoaderData<typeof loader>();
+  const freshness = buildSyncFreshnessNotice(syncStatus, {
+    lastSuccessLabel: syncStatus.lastSuccessfulSyncAt
+      ? formatDateTime(syncStatus.lastSuccessfulSyncAt)
+      : null,
+  });
   const failingChecks = dataHealth.checks.filter(
     (check) => check.tone !== "ok",
   );
@@ -123,6 +131,22 @@ export default function DataHealthPage() {
               Open Replenishment <span aria-hidden="true">→</span>
             </Link>
           </p>
+        </s-section>
+
+        <s-section heading="Sync status">
+          <p className="dsEmptyRow">
+            <strong>{freshness.message}</strong>
+          </p>
+          <p className="dsEmptyRow">
+            Current status: <strong>{syncStatus.current}</strong>. Last sync
+            attempt: {formatDateTime(syncStatus.lastSyncAttemptAt)}. Last
+            successful sync: {formatDateTime(syncStatus.lastSuccessfulSyncAt)}.
+          </p>
+          {syncStatus.lastSyncError && (
+            <p className="dsEmptyRow">
+              Last failure reason: {syncStatus.lastSyncError}
+            </p>
+          )}
         </s-section>
 
         <s-section heading="Checks">

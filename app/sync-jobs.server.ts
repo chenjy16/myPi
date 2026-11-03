@@ -6,17 +6,23 @@ import {
   jobLeaseMinutes,
   leaseCutoff,
   syncJobClaimKey,
+  deriveSyncStatus,
+  type SyncJobRow,
   type SyncJobType,
+  type SyncStatus,
   type SyncTrigger,
 } from "./lib/sync-job-policy";
 
 // 策略层原样转出：调用方继续从本模块拿类型与错误，不必知道它拆在 lib/ 下。
 export {
   SyncAlreadyRunningError,
+  deriveSyncStatus,
   jobLeaseMinutes,
   leaseCutoff,
   syncJobClaimKey,
+  type SyncJobRow,
   type SyncJobType,
+  type SyncStatus,
   type SyncTrigger,
 } from "./lib/sync-job-policy";
 
@@ -195,4 +201,29 @@ export async function recentJobs(shop: string, take = 20) {
       createdAt: true,
     },
   });
+}
+
+/**
+ * 组装某类任务（默认库存快照）的对外同步状态：最近尝试时间 / 最近成功时间 / 当前状态 / 最近失败原因。
+ * 全部由台账可靠计算得出，不新增冗余列（P0-2「不要重复存储可可靠计算的数据」）。
+ * running 判定复用租约算术，所以一次崩溃不会把状态永远停在「运行中」。
+ */
+export async function syncStatusSnapshot(
+  shop: string,
+  jobType: SyncJobType = "inventory-snapshot",
+  now: Date = new Date(),
+): Promise<SyncStatus> {
+  const rows = (await db.dataSyncJob.findMany({
+    where: { shop, jobType },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+    select: {
+      status: true,
+      error: true,
+      startedAt: true,
+      finishedAt: true,
+      createdAt: true,
+    },
+  })) as SyncJobRow[];
+  return deriveSyncStatus(rows, now);
 }

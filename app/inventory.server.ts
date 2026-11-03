@@ -51,6 +51,8 @@ import {
 import {
   withSyncJob,
   consecutiveFailures,
+  syncStatusSnapshot,
+  type SyncStatus,
   type SyncTrigger,
 } from "./sync-jobs.server";
 
@@ -299,6 +301,8 @@ export type ActionBoardSummary = {
 export type InventoryDashboard = {
   settings: DashboardSettings | null;
   locations: InventoryLocation[];
+  /** 台账派生的同步状态：最近尝试/最近成功/当前状态/最近失败原因（P0-2）。 */
+  syncStatus: SyncStatus;
   metrics: {
     totalSkus: number;
     availableStock: number;
@@ -1503,7 +1507,7 @@ export async function getInventoryDashboard(
   canReadAllOrders: boolean,
   now = new Date(),
 ): Promise<InventoryDashboard> {
-  const [settingsRow, offlineSession, snapshotFailures, salesFailures] =
+  const [settingsRow, offlineSession, snapshotFailures, salesFailures, syncStatus] =
     await Promise.all([
       db.inventorySettings.findUnique({ where: { shop } }),
       db.session.findFirst({
@@ -1512,6 +1516,7 @@ export async function getInventoryDashboard(
       }),
       consecutiveFailures(shop, "inventory-snapshot"),
       consecutiveFailures(shop, "sales-daily"),
+      syncStatusSnapshot(shop, "inventory-snapshot", now),
     ]);
 
   const settings = settingsRow ? toDashboardSettings(settingsRow) : null;
@@ -1560,6 +1565,7 @@ export async function getInventoryDashboard(
     return {
       settings,
       locations,
+      syncStatus,
       metrics: emptyMetrics(),
       variants: [],
       dataHealth,
@@ -1638,6 +1644,7 @@ export async function getInventoryDashboard(
   return {
     settings,
     locations,
+    syncStatus,
     metrics,
     variants,
     dataHealth,

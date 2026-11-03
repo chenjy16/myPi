@@ -67,3 +67,82 @@ export function jobLeaseMinutes(): number {
 export function leaseCutoff(now: Date = new Date()): Date {
   return new Date(now.getTime() - jobLeaseMinutes() * 60_000);
 }
+
+/* ---------------- 同步状态与数据新鲜度（P0-2） ---------------- */
+
+/**
+ * 当前同步任务对外呈现的状态。刻意不加 PARTIAL：
+ * 现有同步在事务外抓取、任一 fetch 失败即整体抛错，不会写半份快照，
+ * 所以「部分成功」在当前实现里等价于「失败且保留上次成功数据」，不新增状态去伪装没发生过的中间态。
+ */
+export type SyncStatusName = "never" | "running" | "succeeded" | "failed";
+
+/** deriveSyncStatus 需要的最小行形状（从台账取，字段都可由 DataSyncJob 可靠提供）。 */
+export type SyncJobRow = {
+  status: "queued" | "running" | "succeeded" | "failed";
+  error: string | null;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+  createdAt: Date;
+};
+
+export type SyncStatus = {
+  /** 最近一次任务给出的当前状态；running 只认租约内的行。 */
+  current: SyncStatusName;
+  /** 最后一次「尝试」同步的时间（无论成败），与「成功」严格分开。 */
+  lastSyncAttemptAt: Date | null;
+  /** 最后一次「成功」同步的时间；一次都没成功为 null。 */
+  lastSuccessfulSyncAt: Date | null;
+  /** 最近一次失败尝试的原因（安全一行文本）；最近一次成功则 null。 */
+  lastSyncError: string | null;
+  /** true 表示最新尝试已失败但仍留着更早的成功数据——UI 必须显式告知在看旧数据。 */
+  staleWithFallback: boolean;
+};
+
+/**
+ * 从一家店某类任务最近的台账行推导同步状态。纯函数、可测、不连库。
+ * rows 必须按 createdAt 倒序（最新在前）。running 判定复用租约算术，避免崩溃残留的 running 行被当成在跑。
+ */
+export function deriveSyncStatus(
+  rows: SyncJobRow[],
+  now: Date = new Date(),
+): SyncStatus {
+  const cutoff = leaseCutoff(now);
+  const withinLease = (row: SyncJobRow): boolean =>
+    row.startedAt !== null && row.startedAt >= cutoff;
+
+  const running = rows.find(
+    (row) => row.status === "running" && withinLease(row),
+  );
+  const firstSucceeded = rows.find((row) => row.status === "succeeded");
+  const lastSuccessfulSyncAt = firstSucceeded
+    ? (firstSucceeded.finishedAt ?? firstSucceeded.createdAt)
+    : null;
+
+  // 租约外的 running＝进程崩溃遗留的死行（台账策略本就把它回收成 failed）。
+  // 读取路径不写库，所以在纯函数里同样按「已失败」呈现，绝不伪装成「还在同步」。
+  const latestRaw = rows[0] ?? null;
+  const latest: SyncJobRow | null =
+    latestRaw && latestRaw.status === "running" && !withinLease(latestRaw)
+      ? { ...latestRaw, status: "failed" }
+      : latestRaw;
+
+  const latestFailed = latest?.status === "failed" ? latest : null;
+
+  let current: SyncStatusName;
+  if (running) current = "running";
+  else if (!latest) current = "never";
+  else if (latest.status === "failed") current = "failed";
+  else if (latest.status === "succeeded") current = "succeeded";
+  else current = "running"; // queued 视作进行中，商家只会等、不会看到「失败」
+
+  return {
+    current,
+    lastSyncAttemptAt: latest ? latest.createdAt : null,
+    lastSuccessfulSyncAt,
+    // 只有最新一次尝试确实是失败时才回显原因；否则旧失败不应盖住当前的成功状态。
+    lastSyncError: latestFailed?.error ?? null,
+    staleWithFallback:
+      current === "failed" && lastSuccessfulSyncAt !== null,
+  };
+}

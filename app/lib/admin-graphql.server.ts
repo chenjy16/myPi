@@ -3,44 +3,30 @@ import {
   AppError,
   SHOPIFY_API_UNAVAILABLE_MESSAGE,
   describeError,
-} from "./app-error";
+} from "./app-error.ts";
+import {
+  classifyThrownDetail,
+  isAccessError,
+  isThrottlingError,
+  isUnitCostAccessError,
+  resolveTries,
+  throttleWaitMs,
+  type CostExtension,
+  type GraphQLErrorEntry,
+} from "./shopify-throttle.ts";
 
 /**
  * Admin GraphQL 的唯一出口。做三件事，而 `admin.graphql` 本身都不做：
  *   1. 带上官方客户端的限流重试（不传 `tries` 时库默认 retries=0，429/503 直接抛给调用方）；
  *   2. 把 HTTP 失败、GraphQL errors、`extensions.cost` 节流统一折成带类别的 AppError；
  *   3. 让所有调用点共用一套错误语义，不再各写一份解析。
+ * 限流识别、退避时长、错误分类的算术全部下沉到 shopify-throttle.ts 的纯函数，便于单测覆盖。
  */
-
-/** 官方客户端把 `tries` 折成 retries = tries - 1，并校验 retries ∈ [0,3]，所以 tries 上限是 4。 */
-const MAX_SUPPORTED_TRIES = 4;
-
-/** 每次调用的重试上限；一次突发限流通常 1-2 次退避就能过。 */
-function resolveTries(): number {
-  const configured = Number(process.env.SHOPIFY_GRAPHQL_TRIES ?? 3);
-  if (!Number.isFinite(configured)) return 3;
-  return Math.min(MAX_SUPPORTED_TRIES, Math.max(1, Math.floor(configured)));
-}
-
-type GraphQLErrorEntry = {
-  message: string;
-  path?: Array<string | number>;
-  extensions?: { code?: string };
-};
 
 type ShopifyResponse<T> = {
   data?: T;
   errors?: GraphQLErrorEntry[];
-  extensions?: {
-    cost?: {
-      throttled?: boolean;
-      throttleStatus?: number;
-      nextWaitEstimate?: number;
-      requestedQueryCost?: number;
-      actualQueryCost?: number;
-      queryCostLimit?: number;
-    };
-  };
+  extensions?: { cost?: CostExtension };
 };
 
 export type AdminGraphqlOptions = {
@@ -52,28 +38,9 @@ export type AdminGraphqlOptions = {
   allowUnitCostAccessError?: boolean;
 };
 
-/** 成本读取被拒的判定，与旧的过滤口径保持一致。 */
-function isUnitCostAccessError(error: GraphQLErrorEntry): boolean {
-  return (
-    error.path?.includes("unitCost") === true ||
-    /unit cost|product costs/i.test(error.message)
-  );
-}
-
-/** 节流类错误：Shopify 用 THROTTLED / cost extensions 表达「稍后再试」。 */
-function isThrottlingError(error: GraphQLErrorEntry): boolean {
-  return (
-    error.extensions?.code === "THROTTLED" ||
-    /throttl|rate limit|too many|complexity|bucket/i.test(error.message)
-  );
-}
-
-/** 权限/授权类错误：商家能做的只有重新授权，与「API 暂时不可用」必须分开呈现。 */
-function isAccessError(error: GraphQLErrorEntry): boolean {
-  return /permission|unauthorized|not authorized|doesn.t have|scope|disabled/i.test(
-    error.message,
-  );
-}
+/** 测试可注入的等待实现；生产用真实 setTimeout，被 throttleWaitMs 封顶到最多 5s。 */
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * 执行一次 Admin GraphQL 查询并返回 data。
@@ -83,6 +50,7 @@ export async function adminGraphql<T>(
   admin: AdminApiContext,
   operation: string,
   options: AdminGraphqlOptions = {},
+  wait: (ms: number) => Promise<void> = sleep,
 ): Promise<T> {
   let response: Response;
   try {
@@ -92,15 +60,16 @@ export async function adminGraphql<T>(
     });
   } catch (error) {
     const detail = describeError(error);
-    // 重试耗尽后库会抛「Attempted maximum number of N network retries」，属于暂时不可用。
-    if (/retries/i.test(detail)) {
+    const kind = classifyThrownDetail(detail);
+    if (kind === "retry_exhausted") {
+      // 重试耗尽后库会抛「Attempted maximum number of N network retries」，属于暂时不可用。
       throw new AppError(
         "shopify_api",
         SHOPIFY_API_UNAVAILABLE_MESSAGE,
         detail,
       );
     }
-    if (/session|expires|revoked|invalid_grant|401|403/i.test(detail)) {
+    if (kind === "auth") {
       throw new AppError(
         "auth",
         "This store's authorization is no longer valid for Shopify. Re-authorize the app to continue.",
@@ -122,8 +91,9 @@ export async function adminGraphql<T>(
   }
 
   const cost = payload.extensions?.cost;
+  const waitMs = throttleWaitMs(cost);
   if (cost && (cost.throttled || (cost.nextWaitEstimate ?? 0) > 0)) {
-    // 只记账不拦截：官方客户端已经做过退避，这里留一条可观测线索。
+    // 留一条可观测线索；官方客户端已在本次调用内做过退避。
     console.warn(
       "[adminGraphql] Shopify reported throttling",
       JSON.stringify({
@@ -132,6 +102,11 @@ export async function adminGraphql<T>(
         nextWaitEstimate: cost.nextWaitEstimate ?? null,
       }),
     );
+  }
+  // 确实被节流时，按 Shopify 的动态估算主动等待（封顶 5s）再返回，
+  // 让分页循环里的下一次请求自然让路，避免连续请求把配额一次性打空。
+  if (waitMs > 0) {
+    await wait(waitMs);
   }
 
   const errors = payload.errors ?? [];
