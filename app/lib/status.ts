@@ -4,11 +4,12 @@
  * 纯数据模块：可被 node --test 直接加载（.ts 扩展名互导约定）。
  */
 import { INVENTORY_STATUS_LABELS } from "./inventory-calculations.ts";
-import type { DataHealthTone } from "./data-health.ts";
+import type { DataHealthState, DataHealthTone } from "./data-health.ts";
 import type { ActionBoardState } from "./reorder-action-board.ts";
 import type { InventoryHealthStatus } from "./inventory-calculations.ts";
 import type { ReorderConfidenceLevel } from "./reorder-confidence.ts";
 import type { SyncStatusName } from "./sync-job-policy.ts";
+import type { FreshnessTone } from "./sync-freshness.ts";
 
 /** 补货建议 / 采购计划 / 同步台账的全部业务态。 */
 export type BusinessState =
@@ -193,6 +194,82 @@ export function inventoryStatusView(status: InventoryHealthStatus): StatusView {
     label: INVENTORY_STATUS_LABELS[status],
     className: TONE_CLASS[tone],
   };
+}
+
+/**
+ * 看板整体健康度（页面标题级状态），与单个检查项的 HEALTH_LABEL 是两个层级：
+ * 检查项说 “Pass / Needs attention / Blocking”，看板说的是整体能不能安全下单。
+ * 文案沿用首页既有说法，不另立词汇。
+ */
+export const DATA_HEALTH_STATE_TONE: Record<DataHealthState, StatusTone> = {
+  healthy: "success",
+  degraded: "warning",
+  paused: "critical",
+};
+
+export const DATA_HEALTH_STATE_LABEL: Record<DataHealthState, string> = {
+  healthy: "Data sync healthy",
+  degraded: "Data needs attention",
+  paused: "Reorder decisions paused",
+};
+
+/** 看板健康度的展示视图。 */
+export function dataHealthStateView(state: DataHealthState): StatusView {
+  const tone = DATA_HEALTH_STATE_TONE[state];
+  return {
+    tone,
+    label: DATA_HEALTH_STATE_LABEL[state],
+    className: TONE_CLASS[tone],
+  };
+}
+
+/**
+ * 功能区就绪度：Settings 的五个分段与首页“功能未启用”标记共用一套说法。
+ * 这些不是业务决策态（没有状态机），所以独立成一组，不混进 BusinessState。
+ */
+export type SettingReadiness =
+  | "configured"
+  | "needsSetup"
+  | "available"
+  | "storeSettings"
+  | "systemEstimate"
+  | "notEnabled";
+
+export const READINESS_TONE: Record<SettingReadiness, StatusTone> = {
+  configured: "success",
+  needsSetup: "warning",
+  available: "success",
+  storeSettings: "info",
+  systemEstimate: "neutral",
+  notEnabled: "neutral",
+};
+
+export const READINESS_LABEL: Record<SettingReadiness, string> = {
+  configured: "Configured",
+  needsSetup: "Needs setup",
+  available: "Available",
+  storeSettings: "Store settings",
+  systemEstimate: "System estimate",
+  notEnabled: "Not enabled",
+};
+
+/** 就绪度的展示视图。 */
+export function readinessView(kind: SettingReadiness): StatusView {
+  const tone = READINESS_TONE[kind];
+  return { tone, label: READINESS_LABEL[kind], className: TONE_CLASS[tone] };
+}
+
+/**
+ * 同步新鲜度提示该用哪种横幅。muted（从未同步 / 正在同步）不是问题，用信息横幅；
+ * 数据完全可信时返回 null，页面就不画横幅——不给商家看没有信息量的绿条。
+ */
+export function freshnessBannerTone(
+  tone: FreshnessTone,
+): "info" | "warning" | "critical" | null {
+  if (tone === "ok") return null;
+  if (tone === "critical") return "critical";
+  if (tone === "warn") return "warning";
+  return "info";
 }
 
 const BUSINESS_STATES = Object.keys(STATUS_LABEL) as BusinessState[];

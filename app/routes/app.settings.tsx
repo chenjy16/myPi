@@ -17,12 +17,16 @@ import {
   validateReplenishmentSettings,
   type ReplenishmentFieldName,
 } from "../lib/settings-validation";
+import { formatDate, formatDateTime } from "../lib/format";
 import { saveReplenishmentSettings } from "../inventory.server";
 import { testModelConnection } from "../pi.server";
 import {
   getModelConfigurationStatus,
   ProductCopyError,
 } from "../product-copy.server";
+import { FactGrid } from "../components/ui/fact-grid";
+import { LoadingState } from "../components/ui/loading-state";
+import { ReadinessBadge } from "../components/ui/status-badge";
 
 /**
  * 「谁能测模型连接」的判定。online token 下保留「仅店主」限制；
@@ -35,11 +39,6 @@ function resolveCanTestModel(session: Session): boolean {
     return session.onlineAccessInfo.associated_user.account_owner === true;
   }
   return true;
-}
-
-/** 把同步时间戳收成商家可读的一行文本；没跑过就如实说没跑过，不留空白猜测。 */
-function formatSyncStamp(value: Date | null): string {
-  return value ? `${value.toISOString().slice(0, 16).replace("T", " ")} UTC` : "Never";
 }
 
 /** Settings 页数据：补货参数（含来源标注）、同步状态、模型服务状态与权限判定。 */
@@ -69,9 +68,11 @@ export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
         DEFAULT_REPLENISHMENT_SETTINGS.reviewPeriodDays,
       savedAt: settingsRow?.replenishmentSettingsSavedAt ?? null,
     },
+    // 时间戳原样交给页面，由 lib/format 按商店时区渲染——服务端预拼 UTC 字符串
+    // 会让商家看到一个和自己营业时区错位的时间（spec §10）。
     sync: {
-      lastInventorySyncAt: formatSyncStamp(settingsRow?.lastInventorySyncAt ?? null),
-      lastSalesSyncAt: formatSyncStamp(settingsRow?.lastSalesSyncAt ?? null),
+      lastInventorySyncAt: settingsRow?.lastInventorySyncAt ?? null,
+      lastSalesSyncAt: settingsRow?.lastSalesSyncAt ?? null,
       salesHistoryComplete: settingsRow?.salesHistoryComplete ?? false,
       salesWindowStart: settingsRow?.salesWindowStart ?? null,
     },
@@ -153,6 +154,12 @@ const FIELD_HINTS: Record<ReplenishmentFieldName, string> = {
     "How often you place purchase orders; advice covers demand until the next review.",
 };
 
+const REPLENISHMENT_FIELDS: ReplenishmentFieldName[] = [
+  "leadTimeDays",
+  "safetyStockDays",
+  "reviewPeriodDays",
+];
+
 /** Settings 页：General / Inventory Settings / Supplier Settings / AI Configuration / Data Synchronization 五段。 */
 export default function SettingsPage() {
   const { model, canTestModel, general, replenishment, sync } =
@@ -170,261 +177,230 @@ export default function SettingsPage() {
     data && "connection" in data ? data.connection : undefined;
   const error = data && "error" in data ? data.error : undefined;
 
+  // 结果只跟着「刚刚提交的那一段」出现：补货参数报错不该盖在模型配置下面。
+  const currentIntent = fetcher.formData?.get("intent");
+  const saveSectionBusy = isBusy && currentIntent === "save-replenishment";
+  const testSectionBusy = isBusy && currentIntent === "test-model";
+  const saveErrored =
+    error !== undefined && currentIntent === "save-replenishment";
+  const testErrored = error !== undefined && currentIntent === "test-model";
+
   const configured = model.valid && model.configured;
   const parametersAreCustom = replenishment.savedAt !== null;
+  const timeZone = general.timezone;
 
   return (
     <s-page heading="Settings">
-      <div className="workspace secondaryWorkspace">
-        <div className="pageIntro">
-          <span className="eyebrow">Service configuration</span>
-          <h1>Settings</h1>
-          <p>
-            Manage replenishment parameters, supplier data, model service and
+      <s-section heading="General">
+        <s-stack direction="block" gap="base">
+          <s-paragraph>
+            Replenishment parameters, supplier data, model service and
             synchronization for this store.
-          </p>
-        </div>
-
-        <section className="settingsPanel">
-          <div className="settingsPanelHeading">
-            <div>
-              <span className="sectionGlyph" aria-hidden="true">
-                ◦
-              </span>
-              <h2>General</h2>
-            </div>
-          </div>
-          <dl className="settingsDetails">
-            <div>
-              <dt>Store domain</dt>
-              <dd>{general.shop}</dd>
-            </div>
-            <div>
-              <dt>Primary location</dt>
-              <dd>{general.locationName ?? "Not selected yet"}</dd>
-            </div>
-            <div>
-              <dt>Timezone / currency</dt>
-              <dd>
-                {general.timezone} · {general.currencyCode}
-              </dd>
-            </div>
-          </dl>
-          <p className="settingsHelp">
+          </s-paragraph>
+          <FactGrid
+            facts={[
+              { label: "Store domain", value: general.shop },
+              {
+                label: "Primary location",
+                value: general.locationName ?? "Not selected yet",
+              },
+              {
+                label: "Timezone / currency",
+                value: `${general.timezone} · ${general.currencyCode}`,
+              },
+            ]}
+          />
+          <s-paragraph>
             Timezone and currency follow the Shopify store settings; the order
             date boundary used by advice is shown on Data health.
-          </p>
-        </section>
+          </s-paragraph>
+        </s-stack>
+      </s-section>
 
-        <section className="settingsPanel">
-          <div className="settingsPanelHeading">
-            <div>
-              <span className="sectionGlyph" aria-hidden="true">
-                ⟳
-              </span>
-              <h2>Inventory settings</h2>
-            </div>
-            <span
-              className={`connectionPill ${
-                parametersAreCustom ? "isConfigured" : "needsSetup"
-              }`}
-            >
-              <span aria-hidden="true">●</span>
-              {parametersAreCustom ? "Store settings" : "System estimate"}
-            </span>
-          </div>
-          <p>
+      <s-section heading="Inventory settings">
+        <s-stack direction="block" gap="base">
+          <s-paragraph>
+            <ReadinessBadge
+              kind={parametersAreCustom ? "storeSettings" : "systemEstimate"}
+            />
+          </s-paragraph>
+          <s-paragraph>
             These parameters drive reorder advice. Saving changed values
             recalculates the calculation basis of advice rows on the current
             snapshot; quantities and statuses you already decided on are never
             overwritten.
-          </p>
-          <fetcher.Form method="post" className="settingsForm">
+          </s-paragraph>
+          {saveSectionBusy && <LoadingState label="Saving settings…" />}
+          <fetcher.Form method="post">
             <input type="hidden" name="intent" value="save-replenishment" />
-            <div className="settingsFieldGrid">
-              {(
-                [
-                  ["leadTimeDays", replenishment.leadTimeDays],
-                  ["safetyStockDays", replenishment.safetyStockDays],
-                  ["reviewPeriodDays", replenishment.reviewPeriodDays],
-                ] as const
-              ).map(([field, value]) => (
-                <label className="settingsField" key={field}>
-                  <span>{FIELD_LABELS[field]} (days)</span>
-                  <input
-                    type="number"
+            <s-stack direction="block" gap="base">
+              <s-grid
+                gridTemplateColumns="repeat(auto-fit, minmax(220px, 1fr))"
+                gap="base"
+              >
+                {REPLENISHMENT_FIELDS.map((field) => (
+                  <s-number-field
+                    key={field}
                     name={field}
+                    label={`${FIELD_LABELS[field]} (days)`}
+                    details={FIELD_HINTS[field]}
+                    error={fieldErrors?.[field]}
                     min={REPLENISHMENT_LIMITS[field].min}
                     max={REPLENISHMENT_LIMITS[field].max}
-                    step="1"
+                    step={1}
                     required
-                    disabled={isBusy}
-                    defaultValue={value}
-                    aria-invalid={fieldErrors?.[field] ? "true" : undefined}
+                    disabled={saveSectionBusy}
+                    defaultValue={String(replenishment[field])}
                   />
-                  <em>{
-                    fieldErrors?.[field] ?? FIELD_HINTS[field]
-                  }</em>
-                </label>
-              ))}
-            </div>
-            <s-button
-              type="submit"
-              variant="primary"
-              disabled={isBusy}
-              {...(isBusy ? { loading: true } : {})}
-            >
-              Save settings
-            </s-button>
+                ))}
+              </s-grid>
+              <s-button
+                type="submit"
+                variant="primary"
+                disabled={saveSectionBusy}
+                {...(saveSectionBusy ? { loading: true } : {})}
+              >
+                Save settings
+              </s-button>
+            </s-stack>
           </fetcher.Form>
           {saved && (
-            <div className="settingsSuccess">
-              Saved.{" "}
+            <s-banner tone="success" heading="Settings saved">
               {recalculation?.changed
                 ? `Reorder advice recalculated (${
                     recalculation.registered + recalculation.refreshed
                   } advice rows refreshed).`
                 : "Values matched what was already stored, so nothing was recalculated."}
-            </div>
+            </s-banner>
           )}
-        </section>
+          {saveErrored && error && (
+            <s-banner tone="critical" heading="Operation not completed">
+              {error}
+            </s-banner>
+          )}
+        </s-stack>
+      </s-section>
 
-        <section className="settingsPanel">
-          <div className="settingsPanelHeading">
-            <div>
-              <span className="sectionGlyph" aria-hidden="true">
-                ▤
-              </span>
-              <h2>Supplier settings</h2>
-            </div>
-            <span className="connectionPill isConfigured">
-              <span aria-hidden="true">●</span>Available
-            </span>
-          </div>
-          <p>
+      <s-section heading="Supplier settings">
+        <s-stack direction="block" gap="base">
+          <s-paragraph>
+            <ReadinessBadge kind="available" />
+          </s-paragraph>
+          <s-paragraph>
             Supplier profiles, per-SKU MOQ, case pack, unit cost and supplier
-            lead times are managed on the <a href="/app/suppliers">Suppliers</a>{" "}
-            page. Bound supply terms override the store-wide defaults above for
-            those variants, and reorder quantities round up to full packs and
-            minimum order quantities.
-          </p>
-        </section>
+            lead times are managed on the{" "}
+            <s-link href="/app/suppliers">Suppliers</s-link> page. Bound supply
+            terms override the store-wide defaults above for those variants, and
+            reorder quantities round up to full packs and minimum order
+            quantities.
+          </s-paragraph>
+        </s-stack>
+      </s-section>
 
-        <section className="settingsPanel">
-          <div className="settingsPanelHeading">
-            <div>
-              <span className="sectionGlyph" aria-hidden="true">
-                ⚙
-              </span>
-              <h2>AI configuration</h2>
-            </div>
-            <span
-              className={`connectionPill ${configured ? "isConfigured" : "needsSetup"}`}
-            >
-              <span aria-hidden="true">●</span>
-              {configured ? "Configured" : "Needs setup"}
-            </span>
-          </div>
-          <p>
+      <s-section heading="AI configuration">
+        <s-stack direction="block" gap="base">
+          <s-paragraph>
+            <ReadinessBadge
+              kind={configured ? "configured" : "needsSetup"}
+            />
+          </s-paragraph>
+          <s-paragraph>
             The model connection is configured by the app developer in the
             server environment. The API Key is never displayed, returned to the
             browser, or saved in shop data.
-          </p>
-          <dl className="settingsDetails">
-            <div>
-              <dt>Provider</dt>
-              <dd>{model.provider}</dd>
-            </div>
-            <div>
-              <dt>Model</dt>
-              <dd>{model.model}</dd>
-            </div>
-            <div>
-              <dt>API Key</dt>
-              <dd>
-                {!model.valid
+          </s-paragraph>
+          <FactGrid
+            facts={[
+              { label: "Provider", value: model.provider },
+              { label: "Model", value: model.model },
+              {
+                label: "API Key",
+                value: !model.valid
                   ? "Invalid configuration"
                   : model.configured
                     ? "Configured on the server"
-                    : "Needs setup"}
-              </dd>
-            </div>
-          </dl>
+                    : "Needs setup",
+              },
+            ]}
+          />
           {!configured && (
-            <div className="settingsNotice">
+            <s-banner tone="warning" heading="Model service needs setup">
               Set <code>PI_API_KEY</code> in the environment where the service
               runs. Model requests may incur Provider costs. This build saves
               copy task history only; daily statistics and in-app quota
               management are not included yet.
-            </div>
+            </s-banner>
           )}
+          {testSectionBusy && <LoadingState label="Testing model connection…" />}
           {canTestModel ? (
             <fetcher.Form method="post">
               <input type="hidden" name="intent" value="test-model" />
               <s-button
                 type="submit"
-                disabled={isBusy}
-                {...(isBusy ? { loading: true } : {})}
+                variant="secondary"
+                disabled={testSectionBusy}
+                {...(testSectionBusy ? { loading: true } : {})}
               >
                 Test model connection
               </s-button>
             </fetcher.Form>
           ) : (
-            <p className="settingsHelp">
+            <s-paragraph>
               Only the store owner can start a model connection test.
-            </p>
+            </s-paragraph>
           )}
           {connection?.passed && (
-            <div className="settingsSuccess">
+            <s-banner tone="success" heading="Model connection passed">
               {connection.provider}/{connection.model} connected successfully.
               This test did not create a product draft.
-            </div>
+            </s-banner>
           )}
-        </section>
+          {testErrored && error && (
+            <s-banner tone="critical" heading="Operation not completed">
+              {error}
+            </s-banner>
+          )}
+        </s-stack>
+      </s-section>
 
-        <section className="settingsPanel">
-          <div className="settingsPanelHeading">
-            <div>
-              <span className="sectionGlyph" aria-hidden="true">
-                ▣
-              </span>
-              <h2>Data synchronization</h2>
-            </div>
-          </div>
-          <p>
+      <s-section heading="Data synchronization">
+        <s-stack direction="block" gap="base">
+          <s-paragraph>
             Inventory and sales data refresh on a background schedule, on
             Shopify webhooks, and when you run Sync on the Replenishment page.
             Raw payloads are only invalidation signals — numbers are always
             re-read from the Shopify Admin API.
-          </p>
-          <dl className="settingsDetails">
-            <div>
-              <dt>Last inventory sync</dt>
-              <dd>{sync.lastInventorySyncAt}</dd>
-            </div>
-            <div>
-              <dt>Last sales sync</dt>
-              <dd>{sync.lastSalesSyncAt}</dd>
-            </div>
-            <div>
-              <dt>Sales history coverage</dt>
-              <dd>
-                {sync.salesHistoryComplete && sync.salesWindowStart
-                  ? `Full history from ${sync.salesWindowStart}`
-                  : sync.salesWindowStart
-                    ? `Recent window from ${sync.salesWindowStart} (60-day limit under current approval)`
-                    : "Not synced yet"}
-              </dd>
-            </div>
-          </dl>
-          <p className="settingsHelp">
+          </s-paragraph>
+          <FactGrid
+            facts={[
+              {
+                label: "Last inventory sync",
+                value: formatDateTime(sync.lastInventorySyncAt, timeZone),
+              },
+              {
+                label: "Last sales sync",
+                value: formatDateTime(sync.lastSalesSyncAt, timeZone),
+              },
+              {
+                label: "Sales history coverage",
+                value:
+                  sync.salesHistoryComplete && sync.salesWindowStart
+                    ? `Full history from ${formatDate(sync.salesWindowStart, timeZone)}`
+                    : sync.salesWindowStart
+                      ? `Recent window from ${formatDate(
+                          sync.salesWindowStart,
+                          timeZone,
+                        )} (60-day limit under current approval)`
+                      : "Not synced yet",
+              },
+            ]}
+          />
+          <s-paragraph>
             Check per-check diagnosis and the ledger of every sync run on{" "}
-            <a href="/app/data-health">Data health</a>.
-          </p>
-        </section>
-
-        {error && <div className="settingsError">{error}</div>}
-      </div>
+            <s-link href="/app/data-health">Data health</s-link>.
+          </s-paragraph>
+        </s-stack>
+      </s-section>
     </s-page>
   );
 }

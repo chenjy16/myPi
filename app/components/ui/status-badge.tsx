@@ -5,11 +5,15 @@ import {
   confidenceView,
   syncStatusView,
   inventoryStatusView,
+  dataHealthStateView,
+  readinessView,
   POLARIS_BADGE_TONE,
   type BusinessState,
   type HealthTone,
+  type SettingReadiness,
 } from "../../lib/status";
 import type { ActionBoardState } from "../../lib/reorder-action-board";
+import type { DataHealthState } from "../../lib/data-health";
 import type { InventoryHealthStatus } from "../../lib/inventory-calculations";
 import type { ReorderConfidenceLevel } from "../../lib/reorder-confidence";
 import type { SyncStatusName } from "../../lib/sync-job-policy";
@@ -57,5 +61,24 @@ export function InventoryStatusBadge({
   status: InventoryHealthStatus;
 }) {
   const view = inventoryStatusView(status);
+  return <s-badge tone={POLARIS_BADGE_TONE[view.tone]}>{view.label}</s-badge>;
+}
+
+/**
+ * 看板整体健康度徽章（首页与数据健康页的标题级状态）。
+ * 与 HealthBadge 的区别：那个说单个检查项，这个说整块数据能不能安全下单。
+ */
+export function DataHealthStateBadge({
+  state,
+}: {
+  state: DataHealthState;
+}) {
+  const view = dataHealthStateView(state);
+  return <s-badge tone={POLARIS_BADGE_TONE[view.tone]}>{view.label}</s-badge>;
+}
+
+/** 功能区就绪度徽章：Settings 分段状态与首页未启用模块共用同一词汇与 tone。 */
+export function ReadinessBadge({ kind }: { kind: SettingReadiness }) {
+  const view = readinessView(kind);
   return <s-badge tone={POLARIS_BADGE_TONE[view.tone]}>{view.label}</s-badge>;
 }

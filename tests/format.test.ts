@@ -66,3 +66,22 @@ test("dates honor the shop timezone", () => {
   assert.equal(tokyo, "Nov 3, 2026");
   assert.match(formatDateTime(at, "UTC"), /Nov 3, 2026,\s1:30\s(AM|PM)/);
 });
+
+test("a bare calendar date is not shifted back a day by the shop timezone", () => {
+  // 快照日 / 窗口起始日这类 YYYY-MM-DD 没有时刻信息：new Date("2026-08-05") 是 UTC
+  // 零点，按纽约渲染会变成 Aug 4 —— 商家看到的「快照日」比实际少一天。
+  assert.equal(formatDate("2026-08-05", "America/New_York"), "Aug 5, 2026");
+  assert.equal(formatDate("2026-08-05", "Pacific/Kiritimati"), "Aug 5, 2026");
+  assert.equal(formatDate("2026-08-05"), "Aug 5, 2026");
+  // 带时刻的串不在此列，照常按时区换算
+  assert.equal(
+    formatDate("2026-08-05T20:00:00Z", "America/New_York"),
+    "Aug 5, 2026",
+  );
+});
+
+test("timestamps default to UTC rather than the machine locale when no zone is given", () => {
+  // 无 timeZone 时不能退到「浏览器所在时区」——那是开发者机器，不是商店。
+  const at = new Date("2026-11-03T01:30:00Z");
+  assert.match(formatDate(at), /^Nov 3, 2026$/);
+});

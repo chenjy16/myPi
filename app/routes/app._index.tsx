@@ -1,5 +1,5 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Link, useLoaderData } from "react-router";
+import { useLoaderData, useNavigation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import {
@@ -7,16 +7,34 @@ import {
   getRecentRecommendationAudit,
   type DashboardVariant,
 } from "../inventory.server";
-import { ensureOnboardingCompletedTracked, trackDailyVisit } from "../analytics.server";
+import {
+  ensureOnboardingCompletedTracked,
+  trackDailyVisit,
+} from "../analytics.server";
 import { deriveOnboardingSteps } from "../lib/onboarding";
 import { safeLoader } from "../lib/route-error";
 import { buildSyncFreshnessNotice } from "../lib/sync-freshness";
-import type { DataHealthState, DataHealthTone } from "../lib/data-health";
 import {
-  INVENTORY_STATUS_LABELS,
-  type InventoryHealthStatus,
-} from "../lib/inventory-calculations";
-import type { ReorderConfidenceLevel } from "../lib/reorder-confidence";
+  formatDateTime,
+  formatDate,
+  formatDecimal,
+  formatMoney,
+  formatQuantity,
+  formatRate,
+  MISSING,
+} from "../lib/format";
+import { freshnessBannerTone, isBusinessState } from "../lib/status";
+import { EmptyState } from "../components/ui/empty-state";
+import { FactGrid } from "../components/ui/fact-grid";
+import { LoadingState } from "../components/ui/loading-state";
+import {
+  ConfidenceBadge,
+  DataHealthStateBadge,
+  HealthBadge,
+  InventoryStatusBadge,
+  ReadinessBadge,
+  StatusBadge,
+} from "../components/ui/status-badge";
 
 /** 首页只需看板数据，不查草稿或地点列表。 */
 export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
@@ -57,33 +75,8 @@ export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
   return { dashboard, recentDecisions, onboarding };
 });
 
-const CONFIDENCE_CLASS: Record<ReorderConfidenceLevel, string> = {
-  high: "badgeHigh",
-  medium: "badgeMedium",
-  low: "badgeLow",
-};
-
-const CONFIDENCE_LABELS: Record<ReorderConfidenceLevel, string> = {
-  high: "High",
-  medium: "Medium",
-  low: "Low",
-};
-
-const TONE_CLASS: Record<DataHealthTone, string> = {
-  ok: "",
-  warn: "isWarn",
-  critical: "isCritical",
-};
-
-/** 看板整体健康态对应的颜色语气，paused 比 degraded 更重。 */
-const STATE_TONE: Record<DataHealthState, DataHealthTone> = {
-  healthy: "ok",
-  degraded: "warn",
-  paused: "critical",
-};
-
 /** 越靠前的库存状态越该先看，首页只给最紧急的几条。 */
-const STATUS_PRIORITY: InventoryHealthStatus[] = [
+const STATUS_PRIORITY = [
   "stockout",
   "critical",
   "stockout_risk",
@@ -92,7 +85,7 @@ const STATUS_PRIORITY: InventoryHealthStatus[] = [
   "dead_stock",
   "no_sales",
   "healthy",
-];
+] as const;
 
 /** 取最该处理的建议：只保留给出正数补货量的行，按紧急度再按建议量排序。 */
 function priorityRows(variants: DashboardVariant[], limit: number) {
@@ -110,55 +103,35 @@ function priorityRows(variants: DashboardVariant[], limit: number) {
     .slice(0, limit);
 }
 
-function formatMoney(value: number, currencyCode: string): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currencyCode,
-    maximumFractionDigits: 0,
-  }).format(value);
-}
-
-function formatRate(value: number | null): string {
-  return value === null ? "—" : `${Math.round(value * 100)}%`;
-}
-
-function formatDateTime(value: Date | null | undefined): string {
-  return value
-    ? new Intl.DateTimeFormat("en-US", {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }).format(new Date(value))
-    : "Not synced yet";
-}
-
 /** 库存决策首页：真实指标卡、优先建议、数据健康与最近决策。 */
 export default function HomePage() {
   const { dashboard, recentDecisions, onboarding } =
     useLoaderData<typeof loader>();
-  const { settings, metrics, variants, dataHealth, board, snapshotDate, syncStatus } =
-    dashboard;
+  const {
+    settings,
+    metrics,
+    variants,
+    dataHealth,
+    board,
+    snapshotDate,
+    syncStatus,
+  } = dashboard;
+  const navigation = useNavigation();
+  const isRefreshing = navigation.state === "loading";
+  const timeZone = settings?.timezone ?? null;
+  const currencyCode = settings?.currencyCode ?? "USD";
   const freshness = buildSyncFreshnessNotice(syncStatus, {
     lastSuccessLabel: syncStatus.lastSuccessfulSyncAt
-      ? formatDateTime(syncStatus.lastSuccessfulSyncAt)
+      ? formatDateTime(syncStatus.lastSuccessfulSyncAt, timeZone)
       : null,
   });
-  const freshnessClass =
-    TONE_CLASS[freshness.tone === "muted" ? "ok" : freshness.tone];
+  const freshnessTone = freshnessBannerTone(freshness.tone);
   const advice = priorityRows(variants, 4);
-  const topAdvice = advice[0];
   const reviewedCount =
     board.counts.accepted +
     board.counts.edited +
     board.counts.ignored +
     board.counts.ordered;
-  const currencyCode = settings?.currencyCode ?? "USD";
-  const healthTone = TONE_CLASS[STATE_TONE[dataHealth.state]];
-  const healthCopy =
-    dataHealth.state === "paused"
-      ? { title: "Reorder decisions paused", glyph: "!" }
-      : dataHealth.state === "degraded"
-        ? { title: "Data needs attention", glyph: "!" }
-        : { title: "Data sync healthy", glyph: "✓" };
   const namesByVariant = new Map(
     variants.map((variant) => [
       variant.variantId,
@@ -168,37 +141,42 @@ export default function HomePage() {
   const supplierBoundCount = variants.filter(
     (variant) => variant.supplierTermsApplied !== null,
   ).length;
+  const onboardingComplete = onboarding.every((step) => step.done);
 
-  const metricsCards = [
+  const metricCards = [
     {
       label: "Trackable SKUs",
-      value: String(metrics.totalSkus),
+      value: formatQuantity(metrics.totalSkus),
       note: snapshotDate
-        ? `Snapshot ${snapshotDate}`
+        ? `Snapshot ${formatDate(snapshotDate, timeZone)}`
         : "No inventory snapshot captured yet",
       tone: "tonePurple",
       icon: "▦",
     },
     {
       label: "Stockout risk",
-      value: String(metrics.atRisk),
+      value: formatQuantity(metrics.atRisk),
       note: "Out of stock, critical or short of lead time",
       tone: "toneRed",
       icon: "⚠",
     },
     {
       label: "Needs a decision",
-      value: String(board.adoption.actionableCount),
-      note: `${board.counts.pending} pending · ${reviewedCount} reviewed`,
+      value: formatQuantity(board.adoption.actionableCount),
+      note: `${formatQuantity(board.counts.pending)} pending · ${formatQuantity(
+        reviewedCount,
+      )} reviewed`,
       tone: "toneBlue",
-      icon: "🛒",
+      icon: "▤",
     },
     {
       label: "Estimated inventory value",
       value: formatMoney(metrics.inventoryValue, currencyCode),
       note:
         metrics.variantsMissingCost > 0
-          ? `${metrics.variantsMissingCost} variants missing a readable cost`
+          ? `${formatQuantity(
+              metrics.variantsMissingCost,
+            )} variants missing a readable cost`
           : "Product costs readable for every variant",
       tone: "toneGreen",
       icon: "▣",
@@ -216,379 +194,396 @@ export default function HomePage() {
   ];
 
   return (
-    <div className="ds">
-      <section className="dsHero">
-        <div className="dsHeroCopy">
-          <span className="dsHeroTag">
-            <img className="dsHeroTagLogo" src="/pi-logo.png" alt="" />
-            mypi · Inventory Decision Intelligence
-          </span>
-          <h1 className="dsHeroTitle">
-            Sharper replenishment,
-            <br />
-            steadier supply chain
-          </h1>
-          <p className="dsHeroSub">
-            mypi turns your paid orders and current stock into reorder advice
-            you can question, adjust and export — and tells you plainly when the
+    <s-page heading="mypi">
+      <s-section heading="At a glance">
+        <s-stack direction="block" gap="base">
+          {/* s-page 的 React 类型不暴露 primaryAction / aside 插槽（只有 preact
+              声明带），所以主操作与侧栏内容都按参考页的做法落在 section 里。 */}
+          <s-stack direction="inline" gap="small">
+            <s-button href="/app/inventory" variant="primary">
+              View reorder advice
+            </s-button>
+            <s-button href="/app/data-health" variant="secondary">
+              Check data health
+            </s-button>
+          </s-stack>
+          <s-paragraph>
+            mypi turns your paid orders and current stock into reorder advice you
+            can question, adjust and export — and tells you plainly when the
             data isn’t good enough to act on.
-          </p>
-          <div className="dsHeroActions">
-            <Link className="dsBtnPrimary" to="/app/inventory">
-              View reorder advice <span aria-hidden="true">→</span>
-            </Link>
-            <Link className="dsBtnGhost" to="/app/data-health">
-              Check data health <span aria-hidden="true">▣</span>
-            </Link>
-          </div>
-        </div>
-        <div className="dsHeroArt" aria-hidden="true">
-          <div className="dsArtMain">
-            <span className="dsArtCheck">
-              {topAdvice ? "↗" : dataHealth.paused ? "!" : "✓"}
-            </span>
-            <span className="dsArtLabel">
-              {topAdvice ? "Top suggested purchase" : "Awaiting first sync"}
-            </span>
-            <span className="dsArtQty">
-              {topAdvice
-                ? `${topAdvice.suggestedReorderQuantity} units`
-                : "No advice yet"}
-            </span>
-            <span className="dsArtEta">
-              {topAdvice
-                ? `${topAdvice.productTitle} · covers ${topAdvice.replenishment.coverageDays} days`
-                : "Sync a location to start the daily snapshot series"}
-            </span>
-          </div>
-          <div className="dsArtChip dsArtChipOne">
-            <span>▤</span>
-            <div>
-              Observed demand
-              <small>Visible days only</small>
-            </div>
-          </div>
-          <div className="dsArtChip dsArtChipTwo">
-            <span>▣</span>
-            <div>
-              Confidence notes
-              <small>Why advice is lowered</small>
-            </div>
-          </div>
-          <div className="dsArtChip dsArtChipThree">
-            <span>◷</span>
-            <div>
-              Data health gate
-              <small>Pauses when data is stale</small>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {!onboarding.every((step) => step.done) && (
-        <section className="dsPanel dsOnboarding" aria-label="Getting started">
-          <div className="dsPanelHead">
-            <span className="dsPanelTitle">
-              <span aria-hidden="true">◍</span> Get to your first reliable
-              advice
-            </span>
-            <span className="dsOnboardingCount">
-              {onboarding.filter((step) => step.done).length} /{" "}
-              {onboarding.length} done
-            </span>
-          </div>
-          <ol className="dsOnboardingList">
-            {onboarding.map((step, index) => {
-              const firstOpen =
-                !step.done &&
-                onboarding
-                  .slice(0, index)
-                  .every((earlier) => earlier.done || earlier.key === "params");
-              return (
-                <li
-                  key={step.key}
-                  className={`dsOnboardingItem${step.done ? " isDone" : ""}${firstOpen ? " isOpen" : ""}`}
+          </s-paragraph>
+          {isRefreshing && <LoadingState label="Refreshing dashboard…" />}
+          <section className="dsMetrics" aria-label="Key metrics">
+            {metricCards.map((metric) => (
+              <article className="dsMetric" key={metric.label}>
+                <span
+                  className={`dsMetricIcon ${metric.tone}`}
+                  aria-hidden="true"
                 >
-                  <span className="dsOnboardingMark" aria-hidden="true">
-                    {step.done ? "✓" : index + 1}
-                  </span>
-                  <div className="dsOnboardingBody">
-                    <strong>{step.title}</strong>
-                    <p>{step.hint}</p>
-                  </div>
-                  {!step.done && firstOpen && (
-                    <Link className="dsBtnGhost" to={step.href}>
-                      {step.cta} <span aria-hidden="true">→</span>
-                    </Link>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
-        </section>
+                  {metric.icon}
+                </span>
+                <div className="dsMetricBody">
+                  <span className="dsMetricLabel">{metric.label}</span>
+                  <strong className="dsMetricValue">{metric.value}</strong>
+                  <span className="dsMetricTrend isPlain">{metric.note}</span>
+                </div>
+              </article>
+            ))}
+          </section>
+          {freshnessTone && (
+            <s-banner tone={freshnessTone} heading="Sync freshness">
+              <s-paragraph>{freshness.message}</s-paragraph>
+            </s-banner>
+          )}
+          {dataHealth.paused && (
+            <s-banner tone="critical" heading="Reorder decisions are paused">
+              <s-stack direction="block" gap="small">
+                <s-paragraph>
+                  Store data currently fails a blocking check, so advice stays
+                  visible for reference but shouldn’t drive a purchase.
+                </s-paragraph>
+                {dataHealth.pauseReasons.map((reason) => (
+                  <s-paragraph key={reason}>• {reason}</s-paragraph>
+                ))}
+                <s-link href="/app/data-health">
+                  Review data health details →
+                </s-link>
+              </s-stack>
+            </s-banner>
+          )}
+        </s-stack>
+      </s-section>
+
+      {!onboardingComplete && (
+        <s-section heading="Get to your first reliable advice">
+          <s-stack direction="block" gap="base">
+            <s-paragraph>
+              {formatQuantity(onboarding.filter((step) => step.done).length)} of{" "}
+              {formatQuantity(onboarding.length)} done.
+            </s-paragraph>
+            <s-grid
+              gridTemplateColumns="repeat(auto-fit, minmax(240px, 1fr))"
+              gap="base"
+            >
+              {onboarding.map((step, index) => {
+                // 第一个未完成的步骤才是此刻该做的事；后面的只标状态，不给按钮。
+                const isNext =
+                  !step.done &&
+                  onboarding
+                    .slice(0, index)
+                    .every((earlier) => earlier.done || earlier.key === "params");
+                return (
+                  <s-box
+                    key={step.key}
+                    padding="base"
+                    borderRadius="base"
+                    background="subdued"
+                  >
+                    <s-stack direction="block" gap="small">
+                      <s-text type="strong">
+                        {step.done
+                          ? "✓ "
+                          : isNext
+                            ? "▸ "
+                            : `${index + 1}. `}
+                        {step.title}
+                      </s-text>
+                      <s-paragraph>{step.hint}</s-paragraph>
+                      {isNext && <s-button href={step.href} variant="secondary">{step.cta}</s-button>}
+                    </s-stack>
+                  </s-box>
+                );
+              })}
+            </s-grid>
+          </s-stack>
+        </s-section>
       )}
 
-      <section className="dsMetrics" aria-label="Key metrics">
-        {metricsCards.map((metric) => (
-          <article className="dsMetric" key={metric.label}>
-            <span className={`dsMetricIcon ${metric.tone}`} aria-hidden="true">
-              {metric.icon}
-            </span>
-            <div className="dsMetricBody">
-              <span className="dsMetricLabel">{metric.label}</span>
-              <strong className="dsMetricValue">{metric.value}</strong>
-              <span className="dsMetricTrend isPlain">{metric.note}</span>
-            </div>
-          </article>
-        ))}
-      </section>
+      <s-section heading="Reorder decision board">
+        <s-stack direction="block" gap="base">
+          <s-grid
+            gridTemplateColumns="repeat(auto-fit, minmax(150px, 1fr))"
+            gap="base"
+          >
+            <s-box padding="base" borderRadius="base" background="subdued">
+              <s-text type="strong">
+                {formatQuantity(board.counts.pending)}
+              </s-text>
+              <s-paragraph>Pending review</s-paragraph>
+            </s-box>
+            <s-box padding="base" borderRadius="base" background="subdued">
+              <s-text type="strong">
+                {formatQuantity(board.counts.paused)}
+              </s-text>
+              <s-paragraph>Paused</s-paragraph>
+            </s-box>
+            <s-box padding="base" borderRadius="base" background="subdued">
+              <s-text type="strong">
+                {formatQuantity(board.counts.ordered)}
+              </s-text>
+              <s-paragraph>Ordered</s-paragraph>
+            </s-box>
+            <s-box padding="base" borderRadius="base" background="subdued">
+              <s-text type="strong">
+                {formatQuantity(board.counts.ignored)}
+              </s-text>
+              <s-paragraph>Ignored</s-paragraph>
+            </s-box>
+          </s-grid>
 
-      <section className="dsMain">
-        <div className="dsPanel">
-          <div className="dsPanelHead">
-            <span className="dsPanelTitle">
-              <span aria-hidden="true">↗</span> Reorder decision board
-            </span>
-            <Link className="dsViewAll" to="/app/inventory">
-              Open action board <span aria-hidden="true">→</span>
-            </Link>
-          </div>
-          <div className="dsTabs">
-            <span className="dsTab isActive">
-              Pending <b>{board.counts.pending}</b>
-            </span>
-            <span className="dsTab">
-              Paused <b>{board.counts.paused}</b>
-            </span>
-            <span className="dsTab">
-              Ordered <b>{board.counts.ordered}</b>
-            </span>
-            <span className="dsTab">
-              Ignored <b>{board.counts.ignored}</b>
-            </span>
-          </div>
-          <div className="dsTableWrap">
-            {advice.length === 0 ? (
-              <p className="dsEmptyRow">
-                {snapshotDate
-                  ? "Nothing needs a purchase order right now: no variant currently has a positive reorder suggestion."
-                  : "No inventory snapshot yet. Pick a location and sync on the Replenishment page to compute coverage and advice."}
-              </p>
-            ) : (
-              <table className="dsTable">
-                <thead>
-                  <tr>
-                    <th>Product</th>
-                    <th>Available</th>
-                    <th>Stock status</th>
-                    <th>Est. stockout</th>
-                    <th>Suggested</th>
-                    <th>Confidence</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {advice.map((variant) => (
-                    <tr key={variant.id}>
-                      <td>
-                        <span className="dsProduct">
-                          <span className="dsThumb" aria-hidden="true">
-                            ▣
-                          </span>
-                          {variant.productTitle} — {variant.variantTitle}
-                        </span>
-                        <br />
-                        <span className="dsSku">{variant.sku || "No SKU"}</span>
-                      </td>
-                      <td>{variant.available}</td>
-                      <td>{INVENTORY_STATUS_LABELS[variant.status]}</td>
-                      <td className="dsStockout">
-                        {variant.daysOfInventory === null
-                          ? "No sales observed"
-                          : `${Math.round(variant.daysOfInventory)} days`}
-                      </td>
-                      <td>{variant.suggestedReorderQuantity} units</td>
-                      <td>
-                        <span
-                          className={`dsBadge ${CONFIDENCE_CLASS[variant.confidence.level]}`}
-                        >
-                          {CONFIDENCE_LABELS[variant.confidence.level]}
-                        </span>
-                      </td>
-                      <td>
-                        <Link className="dsRowBtn" to="/app/inventory">
-                          Review
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-
-        <div className="dsRail">
-          <div className="dsPanel dsHealth">
-            <div className="dsPanelHead" style={{ padding: "0 0 4px" }}>
-              <span className="dsPanelTitle">
-                <span aria-hidden="true">✓</span> Data health
-              </span>
-              <Link className="dsViewAll" to="/app/data-health">
-                Details <span aria-hidden="true">→</span>
-              </Link>
-            </div>
-            <div className={`dsHealthState ${healthTone}`}>
-              <span className={`dsHealthDot ${healthTone}`} aria-hidden="true">
-                {healthCopy.glyph}
-              </span>
-              <div>
-                <strong>{healthCopy.title}</strong>
-                <span className={freshnessClass}>{freshness.message}</span>
-              </div>
-            </div>
-            <div className="dsHealthRows">
-              {dataHealth.checks.map((check) => (
-                <div className="dsHealthRow" key={check.key}>
-                  <span>{check.label}</span>
-                  <em className={TONE_CLASS[check.tone]}>
-                    {check.tone === "ok"
-                      ? "Pass"
-                      : check.tone === "warn"
-                        ? "Needs attention"
-                        : "Blocking"}
-                  </em>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="dsBudget">
-            <div className="dsBudgetHead">
-              Purchase budget planner{" "}
-              <span className="dsBeta">Not enabled yet</span>
-            </div>
-            <p>
-              Ranking purchases by cash on hand and supplier payment terms isn’t
-              built yet, so no budget figures are shown here.
-            </p>
-            <Link to="/app/purchase-plans">
-              Open Purchase Plans <span aria-hidden="true">→</span>
-            </Link>
-            <span className="dsBudgetArt" aria-hidden="true">
-              🪙
-            </span>
-          </div>
-        </div>
-      </section>
-
-      <section className="dsBottom">
-        <div className="dsPanel dsCard">
-          <div className="dsCardTitle">
-            <h3>
-              <span aria-hidden="true">⛓</span> Replenishment settings
-            </h3>
-            <Link className="dsViewAll" to="/app/settings">
-              Edit <span aria-hidden="true">→</span>
-            </Link>
-          </div>
-          <div className="dsSupply">
-            <div className="dsSupplyStat">
-              <span>Lead time</span>
-              <strong>
-                {settings ? `${settings.leadTimeDays} days` : "—"}
-              </strong>
-              <em className="dsMetricTrend isPlain">
-                {settings?.replenishmentSettingsSavedAt
-                  ? "Store settings"
-                  : "System estimate"}
-              </em>
-            </div>
-            <div className="dsMap" aria-hidden="true">
-              🌍
-            </div>
-            <div className="dsSupplyStat">
-              <span>Review cycle + safety</span>
-              <strong>
-                {settings
-                  ? `${settings.reviewPeriodDays} + ${settings.safetyStockDays} days`
-                  : "—"}
-              </strong>
-              <em className="dsMetricTrend isPlain">
-                {supplierBoundCount > 0
-                  ? `${supplierBoundCount} SKUs on supplier MOQ terms`
-                  : "No supplier terms bound yet"}
-              </em>
-            </div>
-          </div>
-        </div>
-
-        <div className="dsPanel dsCard">
-          <div className="dsCardTitle">
-            <h3>
-              <span aria-hidden="true">▤</span> Recent decisions
-            </h3>
-            <Link className="dsViewAll" to="/app/inventory">
-              View all <span aria-hidden="true">→</span>
-            </Link>
-          </div>
-          {recentDecisions.length === 0 ? (
-            <p className="dsEmptyRow">
-              No recorded decisions yet. Accepting, adjusting, ignoring or
-              ordering advice adds an audited row here.
-            </p>
+          {advice.length === 0 ? (
+            <EmptyState
+              heading={
+                snapshotDate
+                  ? "Nothing needs a purchase order right now"
+                  : "No inventory snapshot yet"
+              }
+              body={
+                snapshotDate
+                  ? "No variant currently has a positive reorder suggestion, so the worklist is empty. Advice appears as soon as coverage drops below your lead time and review cycle."
+                  : "Pick a location and run a sync on the Replenishment page to compute coverage and advice."
+              }
+              action={
+                <s-button href="/app/inventory" variant="secondary">
+                  Open Replenishment
+                </s-button>
+              }
+            />
           ) : (
-            recentDecisions.map((entry) => (
-              <div
-                className="dsPo"
-                key={`${entry.variantId}-${entry.createdAt.toISOString()}`}
-              >
-                <div>
-                  <span className="dsPoId">
-                    {namesByVariant.get(entry.variantId) ??
-                      `Variant ${entry.variantId.split("/").pop()}`}
-                  </span>
-                  <span className="dsPoMeta">
-                    {entry.action.replace(/-/g, " ")} ·{" "}
-                    {entry.fromStatus ? `${entry.fromStatus} → ` : ""}
-                    {entry.toStatus}
-                  </span>
-                  <span className="dsPoMeta">
-                    {formatDateTime(entry.createdAt)} ·{" "}
-                    {entry.operator ?? "unknown"}
-                  </span>
-                </div>
-                <span className="dsPill pillDraft">
-                  {entry.quantity || entry.suggestedQuantity} units
-                </span>
-              </div>
-            ))
+            <s-table variant="auto">
+              <s-table-header-row>
+                <s-table-header listSlot="primary">Product / SKU</s-table-header>
+                <s-table-header listSlot="labeled">Available</s-table-header>
+                <s-table-header listSlot="labeled">
+                  Stock status
+                </s-table-header>
+                <s-table-header listSlot="labeled">
+                  Est. stockout
+                </s-table-header>
+                <s-table-header listSlot="labeled">Suggested</s-table-header>
+                <s-table-header listSlot="labeled">Confidence</s-table-header>
+                <s-table-header listSlot="inline">Action</s-table-header>
+              </s-table-header-row>
+              <s-table-body>
+                {advice.map((variant) => (
+                  <s-table-row key={variant.id}>
+                    <s-table-cell>
+                      {variant.productTitle} — {variant.variantTitle}
+                      <br />
+                      SKU: {variant.sku || MISSING}
+                    </s-table-cell>
+                    <s-table-cell>
+                      {formatQuantity(variant.available)}
+                    </s-table-cell>
+                    <s-table-cell>
+                      <InventoryStatusBadge status={variant.status} />
+                    </s-table-cell>
+                    <s-table-cell>
+                      {variant.daysOfInventory === null
+                        ? "No sales observed"
+                        : `${formatDecimal(variant.daysOfInventory)} days`}
+                    </s-table-cell>
+                    <s-table-cell>
+                      {formatQuantity(variant.suggestedReorderQuantity)} units
+                    </s-table-cell>
+                    <s-table-cell>
+                      <ConfidenceBadge level={variant.confidence.level} />
+                    </s-table-cell>
+                    <s-table-cell>
+                      <s-button href="/app/inventory" variant="tertiary">
+                        Review
+                      </s-button>
+                    </s-table-cell>
+                  </s-table-row>
+                ))}
+              </s-table-body>
+            </s-table>
           )}
-        </div>
+          <s-link href="/app/inventory">
+            Open action board <span aria-hidden="true">→</span>
+          </s-link>
+        </s-stack>
+      </s-section>
 
-        <div className="dsPanel dsCard">
-          <div className="dsCardTitle">
-            <h3>
-              <span aria-hidden="true">⚡</span> Quick actions
-            </h3>
-          </div>
-          <div className="dsQuick">
-            <Link to="/app/inventory">
-              <span aria-hidden="true">↗</span>Replenishment
-            </Link>
-            <Link to="/app/data-health">
-              <span aria-hidden="true">▣</span>Data health
-            </Link>
-            <Link to="/app/settings">
-              <span aria-hidden="true">⚙</span>Lead times
-            </Link>
-            <Link to="/app/purchase-plans">
-              <span aria-hidden="true">▤</span>Purchase plans
-            </Link>
-          </div>
-        </div>
-      </section>
-    </div>
+      <s-section heading="Data health">
+        <s-stack direction="block" gap="small">
+          <s-stack direction="inline" gap="small">
+            <s-text type="strong">Overall store data</s-text>
+            <DataHealthStateBadge state={dataHealth.state} />
+          </s-stack>
+          {/* 数据可信时这里只留一句安静的新鲜度说明；不可信时由“概览”区画横幅，
+              两处不重复说同一句话。 */}
+          {!freshnessTone && <s-paragraph>{freshness.message}</s-paragraph>}
+          <s-grid
+            gridTemplateColumns="repeat(auto-fit, minmax(240px, 1fr))"
+            gap="small"
+          >
+            {dataHealth.checks.map((check) => (
+              <s-box
+                key={check.key}
+                padding="base"
+                borderRadius="base"
+                background="subdued"
+              >
+                <s-stack direction="block" gap="small">
+                  <s-text>{check.label}</s-text>
+                  <HealthBadge tone={check.tone} />
+                </s-stack>
+              </s-box>
+            ))}
+          </s-grid>
+          <s-link href="/app/data-health">
+            Details <span aria-hidden="true">→</span>
+          </s-link>
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Replenishment settings">
+        <s-stack direction="block" gap="base">
+          <s-paragraph>
+            <ReadinessBadge
+              kind={
+                settings?.replenishmentSettingsSavedAt
+                  ? "storeSettings"
+                  : "systemEstimate"
+              }
+            />
+          </s-paragraph>
+          <FactGrid
+            facts={[
+              {
+                label: "Lead time",
+                value: settings
+                  ? `${formatQuantity(settings.leadTimeDays)} days`
+                  : MISSING,
+              },
+              {
+                label: "Review cycle + safety",
+                value: settings
+                  ? `${formatQuantity(settings.reviewPeriodDays)} + ${formatQuantity(
+                      settings.safetyStockDays,
+                    )} days`
+                  : MISSING,
+              },
+              {
+                label: "Supplier terms",
+                value:
+                  supplierBoundCount > 0
+                    ? `${formatQuantity(
+                        supplierBoundCount,
+                      )} SKUs on supplier MOQ terms`
+                    : "No supplier terms bound yet",
+              },
+            ]}
+          />
+          <s-link href="/app/settings">
+            Edit settings <span aria-hidden="true">→</span>
+          </s-link>
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Purchase budget planner">
+        <s-stack direction="block" gap="small">
+          <s-stack direction="inline" gap="small">
+            <s-text type="strong">Cash-aware purchase ranking</s-text>
+            <ReadinessBadge kind="notEnabled" />
+          </s-stack>
+          <s-paragraph>
+            Ranking purchases by cash on hand and supplier payment terms isn’t
+            built yet, so no budget figures are shown here.
+          </s-paragraph>
+          <s-link href="/app/purchase-plans">
+            Open Purchase Plans <span aria-hidden="true">→</span>
+          </s-link>
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Recent decisions">
+        <s-stack direction="block" gap="base">
+          {recentDecisions.length === 0 ? (
+            <EmptyState
+              heading="No recorded decisions yet"
+              body="Accepting, adjusting, ignoring or ordering advice adds an audited row here. Nothing has been written for this store yet."
+              action={
+                <s-button href="/app/inventory" variant="secondary">
+                  Open Replenishment
+                </s-button>
+              }
+            />
+          ) : (
+            <s-table variant="auto">
+              <s-table-header-row>
+                <s-table-header listSlot="primary">Product</s-table-header>
+                <s-table-header listSlot="labeled">When</s-table-header>
+                <s-table-header listSlot="labeled">Change</s-table-header>
+                <s-table-header listSlot="labeled">Units</s-table-header>
+                <s-table-header listSlot="labeled">By</s-table-header>
+              </s-table-header-row>
+              <s-table-body>
+                {recentDecisions.map((entry) => (
+                  <s-table-row
+                    key={`${entry.variantId}-${entry.createdAt.toISOString()}`}
+                  >
+                    <s-table-cell>
+                      {namesByVariant.get(entry.variantId) ??
+                        `Variant ${entry.variantId.split("/").pop()}`}
+                      <br />
+                      {entry.action.replace(/-/g, " ")}
+                    </s-table-cell>
+                    <s-table-cell>
+                      {formatDateTime(entry.createdAt, timeZone)}
+                    </s-table-cell>
+                    <s-table-cell>
+                      {isBusinessState(entry.fromStatus) ? (
+                        <StatusBadge state={entry.fromStatus} />
+                      ) : (
+                        MISSING
+                      )}{" "}
+                      →{" "}
+                      {isBusinessState(entry.toStatus) ? (
+                        <StatusBadge state={entry.toStatus} />
+                      ) : (
+                        entry.toStatus
+                      )}
+                    </s-table-cell>
+                    <s-table-cell>
+                      {formatQuantity(entry.quantity || entry.suggestedQuantity)}
+                    </s-table-cell>
+                    <s-table-cell>{entry.operator ?? "unknown"}</s-table-cell>
+                  </s-table-row>
+                ))}
+              </s-table-body>
+            </s-table>
+          )}
+          <s-link href="/app/inventory">
+            View all <span aria-hidden="true">→</span>
+          </s-link>
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Quick actions">
+        <s-grid
+          gridTemplateColumns="repeat(auto-fit, minmax(160px, 1fr))"
+          gap="base"
+        >
+          {[
+            { href: "/app/inventory", label: "Replenishment" },
+            { href: "/app/data-health", label: "Data health" },
+            { href: "/app/settings", label: "Lead times" },
+            { href: "/app/purchase-plans", label: "Purchase plans" },
+          ].map((action) => (
+            <s-box
+              key={action.href}
+              padding="base"
+              borderRadius="base"
+              background="subdued"
+            >
+              <s-link href={action.href}>{action.label}</s-link>
+            </s-box>
+          ))}
+        </s-grid>
+      </s-section>
+    </s-page>
   );
 }
 

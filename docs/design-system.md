@@ -1,4 +1,4 @@
-# mypi Design System (Sprint 1 Foundation)
+# mypi Design System
 
 Layering contract for every UI change in this repo. Read this before writing
 any component or style. Rationale and evidence: `docs/ui-audit-report.md`.
@@ -37,7 +37,8 @@ Rules:
 
 | Component | Contract |
 |---|---|
-| `StatusBadge` / `ActionStateBadge` / `HealthBadge` / `ConfidenceBadge` / `SyncStatusBadge` / `InventoryStatusBadge` | The ONLY way to render any state-like value (`lib/status.ts` owns tone + label + class; labels for Action Board / CSV / audit come from the existing domain maps). Pages must not hand-roll pills, raw `s-badge` or plain-text statuses. |
+| `StatusBadge` / `ActionStateBadge` / `HealthBadge` / `ConfidenceBadge` / `SyncStatusBadge` / `InventoryStatusBadge` / `DataHealthStateBadge` / `ReadinessBadge` | The ONLY way to render any state-like value (`lib/status.ts` owns tone + label + class; labels for Action Board / CSV / audit come from the existing domain maps). Pages must not hand-roll pills, raw `s-badge` or plain-text statuses. `ReadinessBadge` carries the six Settings readiness states (`configured · needsSetup · available · storeSettings · systemEstimate · notEnabled`). |
+| `FactGrid` | Read-only label/value fact cards (Polaris `s-grid` + `s-box` only, no CSS of its own). Replaces per-page `<dl>` / hand-built key-value markup. Never use it for editable data. |
 | `EmptyState` | heading + why + next action. "No data" alone is not an empty state. |
 | `LoadingState` | Page-level: while `useNavigation().state !== "idle"`. Row-level: only the control whose `intent` + `variantId` matches `fetcher.formData`. Also disable the trigger to prevent double submit. |
 | `TableSearchField` / `TableSortControl` / `TablePageSizeControl` / `TablePagination` / `TableNoResultsHint` | The list-page toolbar family (spec §8.2). Values are controlled by the page; the components read the Polaris host element's `.value` directly because React 18 does not reliably proxy custom-element events. |
@@ -66,6 +67,42 @@ Pure logic lives in `app/lib/status.ts` (state semantics), `app/lib/format.ts`
 6. Sort defaults to *Most urgent first*, not to product name — the page is a work
    queue, not a catalogue.
 
+## 3c. Page-skeleton contract (Home · Data Health · Settings, Sprint 3)
+
+Every non-list app page is exactly `<s-page heading>` + a sequence of
+`s-section heading`. Copying the reference page is not optional:
+
+1. **One heading source.** The page never renders its own `h1` / hero / `pageIntro`
+   band — `s-page heading` already owns it. A second title inside the body is the
+   duplicate-header defect the audit flagged on Home and Settings.
+2. **`s-page` slots are unavailable in React.** `@shopify/polaris-types` declares
+   `s-page` as `Omit<…, "aside" | "primaryAction" | "secondaryActions" |
+   "breadcrumbActions">` for JSX (only the preact declaration keeps them), and
+   `s-section` only accepts `heading | padding | accessibilityLabel`. So the page's
+   primary CTA goes in an inline `s-stack` inside the first section, and anything
+   that would have been an `aside` becomes its own `s-section`. Do not "fix" this
+   by casting the attribute through — it type-errors and silently no-ops.
+3. **No page-level shells.** No `className="ds"` wrapper, no raw `<table>`, no
+   local pill/tone/label maps: tables are `s-table variant="auto"` with
+   `listSlot`s, and every state value goes through `lib/status.ts` badges. The
+   `ds*` layer is only allowed to survive where Polaris has no equivalent (§1
+   row 2 — currently metric cards, consumed by Home and Metrics).
+4. **Result feedback is scoped to the submitted section.** Derive
+   `saveSectionBusy` / `testSectionBusy` from `fetcher.formData.get("intent")`, so a
+   validation error appears under the form that produced it, not on an unrelated
+   section.
+5. **Navigation out of the page is one `s-link`** ("Back to workspace" /
+   "Details →"), not a hand-built link row.
+6. **Unknown enum values stay literal.** Audit and ledger rows pass through
+   `isBusinessState()` — an unrecognised historical status is printed as-is rather
+   than swallowed by a badge (audit vocabulary is read-only for the UI).
+7. **Never lead an `s-paragraph` with bare text followed by an inline `s-*`
+   element.** Verified in the browser: Polaris takes the default slot from the
+   element child and the leading text disappears (Data Health rendered
+   `. Last sync attempt: …` with the `Current status:` label gone). Put the label
+   and the badge in an inline `s-stack` of `s-text` + badge, and keep the prose in
+   its own `s-paragraph`.
+
 ## 4. Data formatting (spec §10)
 
 | Type | Rule |
@@ -75,7 +112,8 @@ Pure logic lives in `app/lib/status.ts` (state semantics), `app/lib/format.ts`
 | Percentage | `formatPercent` — one decimal, value passed as 0–100 |
 | Rate | `formatRate` — value passed as the 0–1 fraction the API gives, rendered as a whole percent (`62%`) |
 | Measured quantity | `formatDecimal` — daily sales, coverage days (one decimal by default, no zero padding) |
-| Date/time | `formatDate/DateTime(value, shopTimeZone)` — always `settings.timezone`, never browser-local |
+| Date/time | `formatDate/DateTime(value, shopTimeZone)` — always `settings.timezone`, never browser-local; with no zone passed both fall back to UTC, not the machine's zone |
+| Calendar-only date (`YYYY-MM-DD`) | `formatDate` reads it as UTC. A bare date string is `new Date()`-parsed to UTC midnight, so rendering it in `America/New_York` would show the day **before** — snapshot dates and window starts must not shift. Timestamps keep the shop-timezone rule. |
 | Missing | `—` (em dash). Not 0, not "-", not "N/A" |
 | Not enabled | "Not enabled" |
 | Stale | explicit freshness banner; never present old data as new |

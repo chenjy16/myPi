@@ -66,16 +66,25 @@ export function formatDecimal(
   }).format(value);
 }
 
-/** 日期：商店时区（IANA 名，如 "America/New_York"）；缺值 “—”。 */
+/** 纯日历日期串（快照日 / 窗口起始日这类 YYYY-MM-DD），不含时刻与时区信息。 */
+const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * 日期：商店时区（IANA 名，如 "America/New_York"）；缺值 “—”。
+ * 例外：拿到的是纯日历串（没有时刻）时按 UTC 解释——`new Date("2026-08-05")` 是
+ * UTC 零点，若再按纽约时区渲染会变成 8 月 4 日，把「快照日」这种日历事实看少一天。
+ * 带时刻的时间戳仍然走商店时区（见 formatDateTime）。
+ */
 export function formatDate(
   date: Date | string | null | undefined,
   timeZone?: string | null,
 ): string {
+  const isCalendarOnly = typeof date === "string" && CALENDAR_DATE.test(date);
   const value = typeof date === "string" ? new Date(date) : date;
   if (!value || Number.isNaN(value.getTime())) return MISSING;
   return new Intl.DateTimeFormat("en", {
     dateStyle: "medium",
-    ...(timeZone ? { timeZone } : {}),
+    timeZone: isCalendarOnly ? "UTC" : (timeZone ?? "UTC"),
   }).format(value);
 }
 

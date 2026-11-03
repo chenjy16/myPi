@@ -8,20 +8,27 @@ import {
   HEALTH_LABEL,
   TONE_CLASS,
   POLARIS_BADGE_TONE,
+  DATA_HEALTH_STATE_LABEL,
+  READINESS_LABEL,
   statusView,
   healthView,
   actionStateView,
   confidenceView,
   syncStatusView,
   inventoryStatusView,
+  dataHealthStateView,
+  readinessView,
+  freshnessBannerTone,
   isBusinessState,
   type BusinessState,
   type HealthTone,
   type StatusTone,
+  type SettingReadiness,
 } from "../app/lib/status.ts";
 import { INVENTORY_STATUS_LABELS } from "../app/lib/inventory-calculations.ts";
 import type { InventoryHealthStatus } from "../app/lib/inventory-calculations.ts";
 import type { ActionBoardState } from "../app/lib/reorder-action-board.ts";
+import type { DataHealthState } from "../app/lib/data-health.ts";
 import type { ReorderConfidenceLevel } from "../app/lib/reorder-confidence.ts";
 import type { SyncStatusName } from "../app/lib/sync-job-policy.ts";
 
@@ -155,4 +162,52 @@ test("unknown audit status stays plain text instead of being swallowed by a badg
   assert.ok(!isBusinessState("suggestion_created"));
   assert.ok(!isBusinessState(null));
   assert.ok(!isBusinessState(undefined));
+});
+
+const DATA_HEALTH_STATES: DataHealthState[] = ["healthy", "degraded", "paused"];
+
+test("data health state keeps the three merchant-facing sentences and their severity", () => {
+  for (const state of DATA_HEALTH_STATES) {
+    const view = dataHealthStateView(state);
+    assert.equal(view.label, DATA_HEALTH_STATE_LABEL[state]);
+    assert.equal(view.className, TONE_CLASS[view.tone]);
+  }
+  assert.equal(dataHealthStateView("healthy").tone, "success");
+  assert.equal(dataHealthStateView("degraded").tone, "warning");
+  // paused 是「别照着建议下单」的阻断态，不能只显示成黄色提醒
+  assert.equal(dataHealthStateView("paused").tone, "critical");
+});
+
+const READINESS_KINDS: SettingReadiness[] = [
+  "configured",
+  "needsSetup",
+  "available",
+  "storeSettings",
+  "systemEstimate",
+  "notEnabled",
+];
+
+test("readiness badges cover every Settings state with legal Polaris tones", () => {
+  const allowed = ["neutral", "info", "success", "caution", "critical"];
+  for (const kind of READINESS_KINDS) {
+    const view = readinessView(kind);
+    assert.equal(view.label, READINESS_LABEL[kind]);
+    assert.equal(view.className, TONE_CLASS[view.tone]);
+    assert.ok(
+      allowed.includes(POLARIS_BADGE_TONE[view.tone]),
+      `${kind} renders a legal badge tone`,
+    );
+    assert.ok(view.label.length > 0);
+  }
+  // 「系统估算」不是错误，不能染成警告色让商家以为参数坏了
+  assert.equal(readinessView("systemEstimate").tone, "neutral");
+  assert.equal(readinessView("needsSetup").tone, "warning");
+});
+
+test("sync freshness only raises a banner when there is something to say", () => {
+  assert.equal(freshnessBannerTone("ok"), null);
+  assert.equal(freshnessBannerTone("warn"), "warning");
+  assert.equal(freshnessBannerTone("critical"), "critical");
+  // muted（从未同步这类中性事实）用 info，不给商家一个假告警
+  assert.equal(freshnessBannerTone("muted"), "info");
 });
