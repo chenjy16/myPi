@@ -10,6 +10,7 @@ import type { InventoryHealthStatus } from "./inventory-calculations.ts";
 import type { ReorderConfidenceLevel } from "./reorder-confidence.ts";
 import type { SyncStatusName } from "./sync-job-policy.ts";
 import type { FreshnessTone } from "./sync-freshness.ts";
+import { isPurchasePlanStatus, type PurchasePlanStatus } from "./purchase-plans.ts";
 
 /** 补货建议 / 采购计划 / 同步台账的全部业务态。 */
 export type BusinessState =
@@ -282,4 +283,40 @@ export function isBusinessState(
   value: string | null | undefined,
 ): value is BusinessState {
   return typeof value === "string" && BUSINESS_STATES.includes(value as BusinessState);
+}
+
+/**
+ * 供应商的启停状态。刻意不复用 BusinessState 里的 paused：那个是「决策被数据
+ * 质量卡住」（warning / critical 语义），这里的 paused 只是「这一家暂时不参与计算」，
+ * 说成橙色会让商家以为出了问题。
+ */
+export type SupplierActivity = "active" | "paused";
+
+export const SUPPLIER_ACTIVITY_TONE: Record<SupplierActivity, StatusTone> = {
+  active: "success",
+  paused: "neutral",
+};
+
+export const SUPPLIER_ACTIVITY_LABEL: Record<SupplierActivity, string> = {
+  active: "Active",
+  paused: "Paused",
+};
+
+/** 供应商启停的展示视图。 */
+export function supplierActivityView(kind: SupplierActivity): StatusView {
+  const tone = SUPPLIER_ACTIVITY_TONE[kind];
+  return { tone, label: SUPPLIER_ACTIVITY_LABEL[kind], className: TONE_CLASS[tone] };
+}
+
+/**
+ * 采购计划态的展示视图：三态的 tone 与文案完全复用 BusinessState，
+ * 于是补货页、计划页、CSV 与审计说的同一套话（spec §8.6），这里不新造词汇。
+ * status 来自数据库原值：认不出的历史值原样显示（呈现层兜底，不改审计语义），
+ * 绝不让徽章把看不懂的记录吞成空白。
+ */
+export function planStatusView(status: string): StatusView {
+  if (!isPurchasePlanStatus(status)) {
+    return { tone: "neutral", label: status, className: TONE_CLASS.neutral };
+  }
+  return statusView(status as PurchasePlanStatus);
 }

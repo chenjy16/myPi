@@ -37,7 +37,7 @@ Rules:
 
 | Component | Contract |
 |---|---|
-| `StatusBadge` / `ActionStateBadge` / `HealthBadge` / `ConfidenceBadge` / `SyncStatusBadge` / `InventoryStatusBadge` / `DataHealthStateBadge` / `ReadinessBadge` | The ONLY way to render any state-like value (`lib/status.ts` owns tone + label + class; labels for Action Board / CSV / audit come from the existing domain maps). Pages must not hand-roll pills, raw `s-badge` or plain-text statuses. `ReadinessBadge` carries the six Settings readiness states (`configured · needsSetup · available · storeSettings · systemEstimate · notEnabled`). |
+| `StatusBadge` / `ActionStateBadge` / `HealthBadge` / `ConfidenceBadge` / `SyncStatusBadge` / `InventoryStatusBadge` / `DataHealthStateBadge` / `ReadinessBadge` / `SupplierActivityBadge` / `PlanStatusBadge` | The ONLY way to render any state-like value (`lib/status.ts` owns tone + label + class; labels for Action Board / CSV / audit come from the existing domain maps). Pages must not hand-roll pills, raw `s-badge` or plain-text statuses. `ReadinessBadge` carries the six Settings readiness states (`configured · needsSetup · available · storeSettings · systemEstimate · notEnabled`). `SupplierActivityBadge` renders a relationship as Active/**neutral-paused** — pausing a supplier is a deliberate choice, so it must not borrow the warning/critical red that `ActionStateBadge` uses for a *paused decision* (see §3d). `PlanStatusBadge` reuses the shared `STATUS_LABEL`/`STATUS_TONE` vocabulary so the UI never invents a second name for a server plan state, and prints an unrecognised legacy status verbatim instead of swallowing it. |
 | `FactGrid` | Read-only label/value fact cards (Polaris `s-grid` + `s-box` only, no CSS of its own). Replaces per-page `<dl>` / hand-built key-value markup. Never use it for editable data. |
 | `EmptyState` | heading + why + next action. "No data" alone is not an empty state. |
 | `LoadingState` | Page-level: while `useNavigation().state !== "idle"`. Row-level: only the control whose `intent` + `variantId` matches `fetcher.formData`. Also disable the trigger to prevent double submit. |
@@ -74,7 +74,11 @@ Every non-list app page is exactly `<s-page heading>` + a sequence of
 
 1. **One heading source.** The page never renders its own `h1` / hero / `pageIntro`
    band — `s-page heading` already owns it. A second title inside the body is the
-   duplicate-header defect the audit flagged on Home and Settings.
+   duplicate-header defect the audit flagged on Home and Settings. *Settled:* the
+   Home hero block (display headline + 4 decorative cards) is gone for good —
+   confirmed in-browser that `At a glance` reads as the first section and nothing
+   competes with the page title. The value proposition survives as one
+   `s-paragraph` inside that section. No page gets a hero exception.
 2. **`s-page` slots are unavailable in React.** `@shopify/polaris-types` declares
    `s-page` as `Omit<…, "aside" | "primaryAction" | "secondaryActions" |
    "breadcrumbActions">` for JSX (only the preact declaration keeps them), and
@@ -102,6 +106,34 @@ Every non-list app page is exactly `<s-page heading>` + a sequence of
    `. Last sync attempt: …` with the `Current status:` label gone). Put the label
    and the badge in an inline `s-stack` of `s-text` + badge, and keep the prose in
    its own `s-paragraph`.
+
+## 3d. Mutation-page contract (Purchase Plans · Suppliers, Sprint 4)
+
+These pages hold many independent forms in one screen (per-plan line edits, per-supplier
+edits, SKU bindings). The action / state machine / idempotency (`requestKey`) / audit
+vocabulary / Shopify read-only boundary are **not** part of the refactor — only the view
+layer changed. The view rules:
+
+1. **Feedback buckets by `intent`, then by row key.** §3c point 4 says scope a result to
+   its section; when one section renders N cards, a global `intent` match lights all N.
+   So bucket a second time on `fetcher.formData.get("planId")` / `get("formKey")` — a
+   "Saved" or error banner appears only beside the card that was just submitted.
+2. **An unrecognised `intent` surfaces once at the top, not in every bucket.** Route
+   unknown/failed intent to a single `unattributedError` above the sections rather than
+   letting the same sentence render in each bucket.
+3. **Field-level errors attribute via a hidden `formKey`.** The edit drawer / bind form
+   posts an extra `<input type="hidden" name="formKey" …>`; `fieldErrorFor(formKey, field)`
+   maps a server error back onto the exact input without touching the action.
+4. **Placeholder pages still use `s-page`.** `app.supply-chain.tsx` is a "coming soon"
+   segment but renders the same `<s-page>` + `s-section` + `ReadinessBadge
+   kind="notEnabled"` skeleton — an unbuilt feature must not become a rogue `h1` page.
+5. **Pause semantics stay distinct.** A *paused supplier relationship* is `neutral`
+   (`SupplierActivityBadge` — a normal merchant choice); a *paused decision* stays
+   `warning`/`critical` (`ActionStateBadge` — data is unsafe to order against). Never
+   collapse them into one pill.
+6. **Currency/timezone come from Settings, per request.** Loaders read
+   `db.inventorySettings.findFirst` for `currencyCode` + `timezone` and pass them to
+   `formatMoney` / `formatDate`; no page hardcodes USD or a machine-local zone.
 
 ## 4. Data formatting (spec §10)
 

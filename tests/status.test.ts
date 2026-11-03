@@ -20,11 +20,19 @@ import {
   readinessView,
   freshnessBannerTone,
   isBusinessState,
+  SUPPLIER_ACTIVITY_LABEL,
+  supplierActivityView,
+  planStatusView,
   type BusinessState,
   type HealthTone,
   type StatusTone,
   type SettingReadiness,
+  type SupplierActivity,
 } from "../app/lib/status.ts";
+import {
+  PURCHASE_PLAN_STATUS_LABELS,
+  type PurchasePlanStatus,
+} from "../app/lib/purchase-plans.ts";
 import { INVENTORY_STATUS_LABELS } from "../app/lib/inventory-calculations.ts";
 import type { InventoryHealthStatus } from "../app/lib/inventory-calculations.ts";
 import type { ActionBoardState } from "../app/lib/reorder-action-board.ts";
@@ -210,4 +218,41 @@ test("sync freshness only raises a banner when there is something to say", () =>
   assert.equal(freshnessBannerTone("critical"), "critical");
   // muted（从未同步这类中性事实）用 info，不给商家一个假告警
   assert.equal(freshnessBannerTone("muted"), "info");
+});
+
+const SUPPLIER_ACTIVITY_KINDS: SupplierActivity[] = ["active", "paused"];
+
+test("supplier pause is neutral, not the warning/critical used by decision pauses", () => {
+  for (const kind of SUPPLIER_ACTIVITY_KINDS) {
+    const view = supplierActivityView(kind);
+    assert.equal(view.label, SUPPLIER_ACTIVITY_LABEL[kind]);
+    assert.equal(view.className, TONE_CLASS[view.tone]);
+  }
+  assert.equal(supplierActivityView("active").tone, "success");
+  // 停用供应商是商家的正常选择，不是数据出问题，不能染成 warning/critical
+  assert.equal(supplierActivityView("paused").tone, "neutral");
+});
+
+const PURCHASE_PLAN_STATUSES: PurchasePlanStatus[] = [
+  "open",
+  "ordered",
+  "cancelled",
+];
+
+test("purchase plan status reuses the shared vocabulary and tone, not a page map", () => {
+  for (const status of PURCHASE_PLAN_STATUSES) {
+    const view = planStatusView(status);
+    // 文案与状态机那份完全一致，避免 UI 与服务端各说一套
+    assert.equal(view.label, PURCHASE_PLAN_STATUS_LABELS[status]);
+    assert.equal(view.label, STATUS_LABEL[status]);
+    assert.equal(view.tone, STATUS_TONE[status]);
+    assert.equal(view.className, TONE_CLASS[view.tone]);
+  }
+});
+
+test("an unrecognised plan status is shown verbatim instead of swallowed", () => {
+  const view = planStatusView("archived-by-a-migration");
+  assert.equal(view.label, "archived-by-a-migration");
+  assert.equal(view.tone, "neutral");
+  assert.equal(view.className, TONE_CLASS.neutral);
 });

@@ -14,6 +14,7 @@ import {
   validateSupplierProfile,
   validateVariantBinding,
 } from "../lib/supplier-validation";
+import { formatMoney, formatQuantity } from "../lib/format";
 import {
   bindVariantSupplier,
   createSupplier,
@@ -26,6 +27,9 @@ import {
 } from "../suppliers.server";
 import { registerReorderSuggestions } from "../inventory.server";
 import { trackEvent } from "../analytics.server";
+import { EmptyState } from "../components/ui/empty-state";
+import { LoadingState } from "../components/ui/loading-state";
+import { SupplierActivityBadge } from "../components/ui/status-badge";
 
 /** 未绑定供应商的快照变体，作为绑定表单的下拉候选。 */
 type VariantCandidate = {
@@ -48,7 +52,12 @@ export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
 
   const settingsRow = await db.inventorySettings.findUnique({
     where: { shop },
-    select: { locationId: true, locationName: true },
+    select: {
+      locationId: true,
+      locationName: true,
+      currencyCode: true,
+      timezone: true,
+    },
   });
   const [suppliers, bindings] = await Promise.all([
     listSuppliers(shop),
@@ -95,6 +104,7 @@ export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
 
   return {
     locationName: settingsRow?.locationName ?? null,
+    currencyCode: settingsRow?.currencyCode ?? "USD",
     hasSnapshot: candidates.length > 0 || boundVariantInfo.size > 0,
     suppliers,
     bindings,
@@ -235,9 +245,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
+/** 反馈按提交来源分桶：供应商操作的结果只出现在供应商区，绑定操作只出现在供货条款区。 */
+const SUPPLIER_INTENTS = [
+  "create-supplier",
+  "update-supplier",
+  "toggle-supplier",
+  "delete-supplier",
+];
+const BINDING_INTENTS = ["bind-variant", "unbind-variant"];
+
+const EMAIL_MAX_LENGTH = SUPPLIER_LIMITS.contactEmail.max;
+
 export default function SuppliersPage() {
   const {
     locationName,
+    currencyCode,
     hasSnapshot,
     suppliers,
     bindings,
@@ -252,403 +274,480 @@ export default function SuppliersPage() {
   const error = data && "error" in data ? data.error : undefined;
   const fieldErrors =
     data && "fieldErrors" in data ? data.fieldErrors : undefined;
-  const errorScope = data && "scope" in data ? data.scope : undefined;
   const variantInfoById = new Map(boundVariantInfo);
+
+  const currentIntent = fetcher.formData?.get("intent");
+  // 结果只跟着刚提交的那一类操作出现，供应商报错不盖到供货条款区。
+  const supplierSubmit =
+    typeof currentIntent === "string" && SUPPLIER_INTENTS.includes(currentIntent);
+  const bindingSubmit =
+    typeof currentIntent === "string" && BINDING_INTENTS.includes(currentIntent);
+  // 字段错误贴回「刚提交的那张表单」：多个供应商编辑表单共用一个 fetcher，
+  // 用隐藏的 formKey 区分，才不会一个供应商的校验错误同时点亮所有编辑抽屉。
+  const submittedFormKey = fetcher.formData?.get("formKey");
+  const fieldErrorFor = (formKey: string, field: string) =>
+    fieldErrors && submittedFormKey === formKey ? fieldErrors[field] : undefined;
+
+  const activeSupplierOptions = suppliers.filter((s) => s.isActive);
 
   return (
     <s-page heading="Suppliers">
-      <div className="workspace secondaryWorkspace">
-        <div className="pageIntro">
-          <span className="eyebrow">Supply relationships</span>
-          <h1>Suppliers</h1>
-          <p>
+      <s-section heading="Supply relationships">
+        <s-stack direction="block" gap="small">
+          <s-paragraph>
             Record who supplies each SKU and on what terms. Bound suppliers
             override store-wide advice with their own lead time, and reorder
             quantities round up to full case packs and minimum order
             quantities.
-          </p>
+          </s-paragraph>
           {locationName && (
-            <p className="settingsHelp">
+            <s-paragraph>
               Terms apply to variants observed at {locationName}; everything is
               stored inside this app only and never written to Shopify.
-            </p>
+            </s-paragraph>
           )}
-        </div>
-
-        {notice && <div className="settingsSuccess">{notice}</div>}
-        {error && <div className="settingsError">{error}</div>}
-
-        <section className="settingsPanel">
-          <div className="settingsPanelHeading">
-            <div>
-              <span className="sectionGlyph" aria-hidden="true">
-                ▤
-              </span>
-              <h2>Supplier list</h2>
-            </div>
-            <span className="historyCount">{suppliers.length} total</span>
-          </div>
-          {suppliers.length === 0 ? (
-            <p className="dsEmptyRow">
-              No suppliers yet. Add the first one below — advice keeps using
-              store settings until SKUs are bound.
-            </p>
-          ) : (
-            suppliers.map((supplier) => (
-              <div className="supplierRow" key={supplier.id}>
-                <div className="supplierRowMain">
-                  <strong>{supplier.name}</strong>
-                  <span>
-                    {[
-                      supplier.contactName,
-                      supplier.contactEmail,
-                      supplier.contactPhone,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ") || "No contact recorded"}
-                  </span>
-                  <span>
-                    {supplier.leadTimeDays !== null
-                      ? `Lead time ${supplier.leadTimeDays} days`
-                      : "Lead time follows store settings"}{" "}
-                    · {supplier._count.variants} SKU
-                    {supplier._count.variants === 1 ? "" : "s"} bound
-                  </span>
-                </div>
-                <span
-                  className={`connectionPill ${
-                    supplier.isActive ? "isConfigured" : "needsSetup"
-                  }`}
-                >
-                  <span aria-hidden="true">●</span>
-                  {supplier.isActive ? "Active" : "Paused"}
-                </span>
-                <fetcher.Form method="post" className="supplierRowActions">
-                  <input type="hidden" name="intent" value="toggle-supplier" />
-                  <input
-                    type="hidden"
-                    name="supplierId"
-                    value={supplier.id}
-                  />
-                  <input
-                    type="hidden"
-                    name="activate"
-                    value={supplier.isActive ? "false" : "true"}
-                  />
-                  <s-button type="submit" disabled={isBusy}>
-                    {supplier.isActive ? "Pause" : "Activate"}
-                  </s-button>
-                </fetcher.Form>
-                <fetcher.Form
-                  method="post"
-                  className="supplierRowActions"
-                  onSubmit={(event) => {
-                    if (
-                      !window.confirm(
-                        `Delete “${supplier.name}”? ${supplier._count.variants} SKU binding(s) will fall back to store settings.`,
-                      )
-                    ) {
-                      event.preventDefault();
-                    }
-                  }}
-                >
-                  <input type="hidden" name="intent" value="delete-supplier" />
-                  <input
-                    type="hidden"
-                    name="supplierId"
-                    value={supplier.id}
-                  />
-                  <s-button type="submit" disabled={isBusy}>
-                    Delete
-                  </s-button>
-                </fetcher.Form>
-                <details className="supplierEdit">
-                  <summary>Edit</summary>
-                  <fetcher.Form method="post" className="supplierEditForm">
-                    <input type="hidden" name="intent" value="update-supplier" />
-                    <input
-                      type="hidden"
-                      name="supplierId"
-                      value={supplier.id}
-                    />
-                    <label>
-                      <span>Name</span>
-                      <input
-                        name="name"
-                        maxLength={SUPPLIER_LIMITS.name.max}
-                        required
-                        defaultValue={supplier.name}
-                      />
-                    </label>
-                    <label>
-                      <span>Contact name</span>
-                      <input
-                        name="contactName"
-                        maxLength={SUPPLIER_LIMITS.contactName.max}
-                        defaultValue={supplier.contactName ?? ""}
-                      />
-                    </label>
-                    <label>
-                      <span>Contact email</span>
-                      <input
-                        name="contactEmail"
-                        type="email"
-                        maxLength={SUPPLIER_LIMITS.contactEmail.max}
-                        defaultValue={supplier.contactEmail ?? ""}
-                      />
-                    </label>
-                    <label>
-                      <span>Contact phone</span>
-                      <input
-                        name="contactPhone"
-                        maxLength={SUPPLIER_LIMITS.contactPhone.max}
-                        defaultValue={supplier.contactPhone ?? ""}
-                      />
-                    </label>
-                    <label>
-                      <span>Lead time (days, blank = store setting)</span>
-                      <input
-                        name="leadTimeDays"
-                        type="number"
-                        min={SUPPLIER_LIMITS.leadTimeDays.min}
-                        max={SUPPLIER_LIMITS.leadTimeDays.max}
-                        step="1"
-                        defaultValue={supplier.leadTimeDays ?? ""}
-                      />
-                    </label>
-                    <label>
-                      <span>Notes</span>
-                      <input
-                        name="notes"
-                        maxLength={SUPPLIER_LIMITS.notes.max}
-                        defaultValue={supplier.notes ?? ""}
-                      />
-                    </label>
-                    <s-button type="submit" variant="primary" disabled={isBusy}>
-                      Save changes
-                    </s-button>
-                  </fetcher.Form>
-                </details>
-              </div>
-            ))
+          {/* s-page 只接受 s-section 直接子节点，反馈横幅放进本节，不裸挂在页面层。 */}
+          {supplierSubmit && notice && (
+            <s-banner tone="success" heading="Saved">
+              {notice}
+            </s-banner>
           )}
-        </section>
+          {supplierSubmit && error && (
+            <s-banner tone="critical" heading="Couldn't save">
+              {error}
+            </s-banner>
+          )}
+        </s-stack>
+      </s-section>
 
-        <section className="settingsPanel">
-          <div className="settingsPanelHeading">
-            <div>
-              <span className="sectionGlyph" aria-hidden="true">
-                ＋
-              </span>
-              <h2>Add supplier</h2>
-            </div>
-          </div>
-          <fetcher.Form method="post" className="supplierEditForm">
-            <input type="hidden" name="intent" value="create-supplier" />
-            <label>
-              <span>Name</span>
-              <input
+      <s-section heading={`Supplier list (${suppliers.length})`}>
+        {suppliers.length === 0 ? (
+          <EmptyState
+            heading="No suppliers yet"
+            body="Add the first one below. Reorder advice keeps using the store-wide lead time and has no MOQ rounding until a SKU is bound to a supplier."
+          />
+        ) : (
+          <s-grid
+            gridTemplateColumns="repeat(auto-fit, minmax(320px, 1fr))"
+            gap="base"
+          >
+            {suppliers.map((supplier) => {
+              const contactLine = [
+                supplier.contactName,
+                supplier.contactEmail,
+                supplier.contactPhone,
+              ]
+                .filter(Boolean)
+                .join(" · ");
+              return (
+                <s-box
+                  key={supplier.id}
+                  padding="base"
+                  borderRadius="base"
+                  background="subdued"
+                >
+                  <s-stack direction="block" gap="small">
+                    <s-stack direction="inline" gap="small">
+                      <s-text type="strong">{supplier.name}</s-text>
+                      <SupplierActivityBadge
+                        kind={supplier.isActive ? "active" : "paused"}
+                      />
+                    </s-stack>
+                    <s-paragraph>
+                      {contactLine || "No contact recorded"}
+                    </s-paragraph>
+                    <s-paragraph>
+                      {supplier.leadTimeDays !== null
+                        ? `Lead time ${formatQuantity(supplier.leadTimeDays)} days`
+                        : "Lead time follows store settings"}{" "}
+                      ·{" "}
+                      {formatQuantity(supplier._count.variants)} SKU
+                      {supplier._count.variants === 1 ? "" : "s"} bound
+                    </s-paragraph>
+                    {supplier.notes && <s-paragraph>{supplier.notes}</s-paragraph>}
+
+                    <s-stack direction="inline" gap="small">
+                      <fetcher.Form method="post">
+                        <input
+                          type="hidden"
+                          name="intent"
+                          value="toggle-supplier"
+                        />
+                        <input
+                          type="hidden"
+                          name="supplierId"
+                          value={supplier.id}
+                        />
+                        <input
+                          type="hidden"
+                          name="activate"
+                          value={supplier.isActive ? "false" : "true"}
+                        />
+                        <s-button type="submit" variant="secondary" disabled={isBusy}>
+                          {supplier.isActive ? "Pause" : "Activate"}
+                        </s-button>
+                      </fetcher.Form>
+                      <fetcher.Form
+                        method="post"
+                        onSubmit={(event) => {
+                          if (
+                            !window.confirm(
+                              `Delete “${supplier.name}”? ${supplier._count.variants} SKU binding(s) will fall back to store settings.`,
+                            )
+                          ) {
+                            event.preventDefault();
+                          }
+                        }}
+                      >
+                        <input
+                          type="hidden"
+                          name="intent"
+                          value="delete-supplier"
+                        />
+                        <input
+                          type="hidden"
+                          name="supplierId"
+                          value={supplier.id}
+                        />
+                        <s-button type="submit" variant="tertiary" disabled={isBusy}>
+                          Delete
+                        </s-button>
+                      </fetcher.Form>
+                    </s-stack>
+
+                    <details>
+                      <summary>Edit details</summary>
+                      <fetcher.Form method="post">
+                        <input type="hidden" name="intent" value="update-supplier" />
+                        <input
+                          type="hidden"
+                          name="supplierId"
+                          value={supplier.id}
+                        />
+                        <input
+                          type="hidden"
+                          name="formKey"
+                          value={supplier.id}
+                        />
+                        <s-stack direction="block" gap="base">
+                          <s-text-field
+                            label="Name"
+                            name="name"
+                            maxLength={SUPPLIER_LIMITS.name.max}
+                            required
+                            error={fieldErrorFor(supplier.id, "name")}
+                            defaultValue={supplier.name}
+                          />
+                          <s-text-field
+                            label="Contact name"
+                            name="contactName"
+                            maxLength={SUPPLIER_LIMITS.contactName.max}
+                            error={fieldErrorFor(supplier.id, "contactName")}
+                            defaultValue={supplier.contactName ?? ""}
+                          />
+                          <s-email-field
+                            label="Contact email"
+                            name="contactEmail"
+                            maxLength={EMAIL_MAX_LENGTH}
+                            error={fieldErrorFor(supplier.id, "contactEmail")}
+                            defaultValue={supplier.contactEmail ?? ""}
+                          />
+                          <s-text-field
+                            label="Contact phone"
+                            name="contactPhone"
+                            maxLength={SUPPLIER_LIMITS.contactPhone.max}
+                            error={fieldErrorFor(supplier.id, "contactPhone")}
+                            defaultValue={supplier.contactPhone ?? ""}
+                          />
+                          <s-number-field
+                            label="Lead time (days)"
+                            name="leadTimeDays"
+                            details="Leave blank to follow the store-wide lead time."
+                            min={SUPPLIER_LIMITS.leadTimeDays.min}
+                            max={SUPPLIER_LIMITS.leadTimeDays.max}
+                            step={1}
+                            error={fieldErrorFor(supplier.id, "leadTimeDays")}
+                            defaultValue={
+                              supplier.leadTimeDays !== null
+                                ? String(supplier.leadTimeDays)
+                                : ""
+                            }
+                          />
+                          <s-text-area
+                            label="Notes"
+                            name="notes"
+                            maxLength={SUPPLIER_LIMITS.notes.max}
+                            error={fieldErrorFor(supplier.id, "notes")}
+                            defaultValue={supplier.notes ?? ""}
+                          />
+                          {submittedFormKey === supplier.id &&
+                            supplierSubmit && (
+                              <LoadingState label="Saving supplier…" />
+                            )}
+                          <s-button
+                            type="submit"
+                            variant="primary"
+                            disabled={isBusy}
+                          >
+                            Save changes
+                          </s-button>
+                        </s-stack>
+                      </fetcher.Form>
+                    </details>
+                  </s-stack>
+                </s-box>
+              );
+            })}
+          </s-grid>
+        )}
+      </s-section>
+
+      <s-section heading="Add supplier">
+        <fetcher.Form method="post">
+          <input type="hidden" name="intent" value="create-supplier" />
+          <input type="hidden" name="formKey" value="new" />
+          <s-stack direction="block" gap="base">
+            <s-grid
+              gridTemplateColumns="repeat(auto-fit, minmax(240px, 1fr))"
+              gap="base"
+            >
+              <s-text-field
+                label="Name"
                 name="name"
                 maxLength={SUPPLIER_LIMITS.name.max}
                 required
                 placeholder="e.g. Guangzhou Textiles Co."
+                error={fieldErrorFor("new", "name")}
               />
-            </label>
-            <label>
-              <span>Contact name</span>
-              <input
+              <s-text-field
+                label="Contact name"
                 name="contactName"
                 maxLength={SUPPLIER_LIMITS.contactName.max}
+                error={fieldErrorFor("new", "contactName")}
               />
-            </label>
-            <label>
-              <span>Contact email</span>
-              <input
+              <s-email-field
+                label="Contact email"
                 name="contactEmail"
-                type="email"
-                maxLength={SUPPLIER_LIMITS.contactEmail.max}
+                maxLength={EMAIL_MAX_LENGTH}
+                error={fieldErrorFor("new", "contactEmail")}
               />
-            </label>
-            <label>
-              <span>Contact phone</span>
-              <input
+              <s-text-field
+                label="Contact phone"
                 name="contactPhone"
                 maxLength={SUPPLIER_LIMITS.contactPhone.max}
+                error={fieldErrorFor("new", "contactPhone")}
               />
-            </label>
-            <label>
-              <span>Lead time (days, blank = store setting)</span>
-              <input
+              <s-number-field
+                label="Lead time (days)"
                 name="leadTimeDays"
-                type="number"
+                details="Leave blank to follow the store-wide lead time."
                 min={SUPPLIER_LIMITS.leadTimeDays.min}
                 max={SUPPLIER_LIMITS.leadTimeDays.max}
-                step="1"
+                step={1}
+                error={fieldErrorFor("new", "leadTimeDays")}
               />
-            </label>
-            <label>
-              <span>Notes</span>
-              <input name="notes" maxLength={SUPPLIER_LIMITS.notes.max} />
-            </label>
-            {fieldErrors && errorScope === "supplier" && (
-              <div className="settingsError">
-                {Object.values(fieldErrors).join(" ")}
-              </div>
+            </s-grid>
+            <s-text-area
+              label="Notes"
+              name="notes"
+              maxLength={SUPPLIER_LIMITS.notes.max}
+              error={fieldErrorFor("new", "notes")}
+            />
+            {submittedFormKey === "new" && supplierSubmit && isBusy && (
+              <LoadingState label="Adding supplier…" />
             )}
             <s-button type="submit" variant="primary" disabled={isBusy}>
               Add supplier
             </s-button>
-          </fetcher.Form>
-        </section>
+          </s-stack>
+        </fetcher.Form>
+      </s-section>
 
-        <section className="settingsPanel">
-          <div className="settingsPanelHeading">
-            <div>
-              <span className="sectionGlyph" aria-hidden="true">
-                ⛓
-              </span>
-              <h2>SKU supply terms</h2>
-            </div>
-            <span className="historyCount">{bindings.length} bound</span>
-          </div>
-          {bindings.length === 0 ? (
-            <p className="dsEmptyRow">
-              No SKUs are bound to a supplier yet, so every suggestion uses the
-              store-wide lead time without MOQ rounding.
-            </p>
-          ) : (
-            bindings.map((binding) => {
-              const info = variantInfoById.get(binding.variantId);
-              return (
-                <div className="supplierRow" key={binding.id}>
-                  <div className="supplierRowMain">
-                    <strong>
-                      {info
-                        ? variantLabel(info)
-                        : `Variant ${binding.variantId.slice(-8)} (not in current snapshot)`}
-                    </strong>
-                    <span>
-                      {binding.supplier.name}
-                      {!binding.supplier.isActive && " (paused — inactive in calculations)"}
-                    </span>
-                    <span>
-                      MOQ {binding.minOrderQuantity || "none"} ·{" "}
-                      {binding.casePack > 1
-                        ? `case pack ${binding.casePack}`
-                        : "no case rounding"}
-                      {binding.unitCost !== null
-                        ? ` · unit cost ${binding.unitCost}`
-                        : ""}
-                    </span>
-                  </div>
-                  <fetcher.Form
-                    method="post"
-                    className="supplierRowActions"
-                    onSubmit={(event) => {
-                      if (
-                        !window.confirm(
-                          "Unbind this variant? Advice for it falls back to store settings.",
-                        )
-                      ) {
-                        event.preventDefault();
-                      }
-                    }}
-                  >
-                    <input type="hidden" name="intent" value="unbind-variant" />
-                    <input
-                      type="hidden"
-                      name="variantId"
-                      value={binding.variantId}
-                    />
-                    <s-button type="submit" disabled={isBusy}>
-                      Unbind
-                    </s-button>
-                  </fetcher.Form>
-                </div>
-              );
-            })
+      <s-section heading={`SKU supply terms (${bindings.length} bound)`}>
+        <s-stack direction="block" gap="base">
+          {bindingSubmit && notice && (
+            <s-banner tone="success" heading="Saved">
+              {notice}
+            </s-banner>
           )}
-          {suppliers.length === 0 || !hasSnapshot ? (
-            <p className="settingsNotice">
-              {suppliers.length === 0
-                ? "Add a supplier first, then bind SKUs to it."
-                : "No inventory snapshot is available yet. Run a Sync on the Replenishment page before binding SKUs."}
-            </p>
+          {bindingSubmit && error && (
+            <s-banner tone="critical" heading="Couldn't save">
+              {error}
+            </s-banner>
+          )}
+          {bindings.length === 0 ? (
+            <EmptyState
+              heading="No SKUs are bound to a supplier"
+              body="Every suggestion currently uses the store-wide lead time without MOQ or case-pack rounding. Bind a SKU below once you have at least one supplier."
+            />
           ) : (
-            <fetcher.Form method="post" className="supplierEditForm">
-              <input type="hidden" name="intent" value="bind-variant" />
-              <label>
-                <span>Variant</span>
-                <select name="variantId" required defaultValue="">
-                  <option value="" disabled>
+            <s-table variant="list">
+              <s-table-header-row>
+                <s-table-header listSlot="primary">Variant</s-table-header>
+                <s-table-header listSlot="labeled">Supplier</s-table-header>
+                <s-table-header listSlot="labeled">Terms</s-table-header>
+                <s-table-header listSlot="inline">Action</s-table-header>
+              </s-table-header-row>
+              <s-table-body>
+                {bindings.map((binding) => {
+                  const info = variantInfoById.get(binding.variantId);
+                  const termsLine = [
+                    binding.minOrderQuantity > 0
+                      ? `MOQ ${formatQuantity(binding.minOrderQuantity)}`
+                      : "No MOQ",
+                    binding.casePack > 1
+                      ? `case pack ${formatQuantity(binding.casePack)}`
+                      : "No case rounding",
+                    `unit cost ${formatMoney(binding.unitCost, currencyCode)}`,
+                  ].join(" · ");
+                  return (
+                    <s-table-row key={binding.id}>
+                      <s-table-cell>
+                        {info
+                          ? variantLabel(info)
+                          : `Variant ${binding.variantId.slice(-8)} (not in current snapshot)`}
+                      </s-table-cell>
+                      <s-table-cell>
+                        <s-stack direction="inline" gap="small">
+                          <s-text>{binding.supplier.name}</s-text>
+                          {!binding.supplier.isActive && (
+                            <SupplierActivityBadge kind="paused" />
+                          )}
+                        </s-stack>
+                      </s-table-cell>
+                      <s-table-cell>{termsLine}</s-table-cell>
+                      <s-table-cell>
+                        <fetcher.Form
+                          method="post"
+                          onSubmit={(event) => {
+                            if (
+                              !window.confirm(
+                                "Unbind this variant? Advice for it falls back to store settings.",
+                              )
+                            ) {
+                              event.preventDefault();
+                            }
+                          }}
+                        >
+                          <input
+                            type="hidden"
+                            name="intent"
+                            value="unbind-variant"
+                          />
+                          <input
+                            type="hidden"
+                            name="variantId"
+                            value={binding.variantId}
+                          />
+                          <s-button type="submit" variant="tertiary" disabled={isBusy}>
+                            Unbind
+                          </s-button>
+                        </fetcher.Form>
+                      </s-table-cell>
+                    </s-table-row>
+                  );
+                })}
+              </s-table-body>
+            </s-table>
+          )}
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Bind a SKU to a supplier">
+        {suppliers.length === 0 || !hasSnapshot ? (
+          <s-banner tone="info" heading="Nothing to bind yet">
+            {suppliers.length === 0
+              ? "Add a supplier first, then bind SKUs to it."
+              : "No inventory snapshot is available yet. Run a Sync on the Replenishment page before binding SKUs."}
+          </s-banner>
+        ) : (
+          <fetcher.Form method="post">
+            <input type="hidden" name="intent" value="bind-variant" />
+            <input type="hidden" name="formKey" value="binding" />
+            <s-stack direction="block" gap="base">
+              <s-grid
+                gridTemplateColumns="repeat(auto-fit, minmax(240px, 1fr))"
+                gap="base"
+              >
+                <s-select
+                  label="Variant"
+                  name="variantId"
+                  required
+                  value=""
+                  error={fieldErrorFor("binding", "variantId")}
+                >
+                  <s-option value="" disabled>
                     Choose a variant…
-                  </option>
+                  </s-option>
                   {candidates.map((candidate) => (
-                    <option key={candidate.variantId} value={candidate.variantId}>
+                    <s-option key={candidate.variantId} value={candidate.variantId}>
                       {variantLabel(candidate)}
-                    </option>
+                    </s-option>
                   ))}
-                </select>
-              </label>
-              <label>
-                <span>Supplier</span>
-                <select name="supplierId" required defaultValue="">
-                  <option value="" disabled>
+                </s-select>
+                <s-select
+                  label="Supplier"
+                  name="supplierId"
+                  required
+                  value=""
+                  error={fieldErrorFor("binding", "supplierId")}
+                >
+                  <s-option value="" disabled>
                     Choose a supplier…
-                  </option>
-                  {suppliers
-                    .filter((supplier) => supplier.isActive)
-                    .map((supplier) => (
-                      <option key={supplier.id} value={supplier.id}>
-                        {supplier.name}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <label>
-                <span>Minimum order quantity (units)</span>
-                <input
+                  </s-option>
+                  {activeSupplierOptions.map((supplier) => (
+                    <s-option key={supplier.id} value={supplier.id}>
+                      {supplier.name}
+                    </s-option>
+                  ))}
+                </s-select>
+                <s-number-field
+                  label="Minimum order quantity (units)"
                   name="minOrderQuantity"
-                  type="number"
+                  placeholder="0"
                   min={SUPPLIER_LIMITS.minOrderQuantity.min}
                   max={SUPPLIER_LIMITS.minOrderQuantity.max}
-                  step="1"
-                  placeholder="0"
+                  step={1}
+                  error={fieldErrorFor("binding", "minOrderQuantity")}
                 />
-              </label>
-              <label>
-                <span>Case pack (units per case)</span>
-                <input
+                <s-number-field
+                  label="Case pack (units per case)"
                   name="casePack"
-                  type="number"
+                  placeholder="0"
                   min={SUPPLIER_LIMITS.casePack.min}
                   max={SUPPLIER_LIMITS.casePack.max}
-                  step="1"
-                  placeholder="0"
+                  step={1}
+                  error={fieldErrorFor("binding", "casePack")}
                 />
-              </label>
-              <label>
-                <span>Unit cost (supplier quote)</span>
-                <input
+                <s-number-field
+                  label={`Unit cost (${currencyCode})`}
                   name="unitCost"
-                  type="text"
-                  inputMode="decimal"
-                  maxLength={12}
-                  placeholder="e.g. 4.50"
+                  details="Supplier’s quoted price per unit, up to 2 decimals."
+                  placeholder="4.50"
+                  min={SUPPLIER_LIMITS.unitCost.min}
+                  max={SUPPLIER_LIMITS.unitCost.max}
+                  step={0.01}
+                  error={fieldErrorFor("binding", "unitCost")}
                 />
-              </label>
-              {fieldErrors && errorScope === "binding" && (
-                <div className="settingsError">
-                  {Object.values(fieldErrors).join(" ")}
-                </div>
+              </s-grid>
+              {submittedFormKey === "binding" && bindingSubmit && isBusy && (
+                <LoadingState label="Saving supply terms…" />
               )}
               <s-button type="submit" variant="primary" disabled={isBusy}>
                 Save supply terms
               </s-button>
-            </fetcher.Form>
-          )}
-        </section>
-      </div>
+            </s-stack>
+          </fetcher.Form>
+        )}
+      </s-section>
+
+      <s-section heading="App navigation">
+        <s-stack direction="inline" gap="base">
+          <s-link href="/app/inventory">Replenishment</s-link>
+          <s-link href="/app/settings">Settings</s-link>
+          <s-link href="/app">Back to workspace</s-link>
+        </s-stack>
+      </s-section>
     </s-page>
   );
 }
