@@ -41,7 +41,7 @@
   gap: 6px;
   padding: 5px 12px;
   border-radius: 999px;
-  color: #4c32c6;
+  color: var(--app-purple-dark);
   background: #ffffffcc;
   box-shadow: 0 2px 8px #4c32c614;
   font-size: 12px;
@@ -58,7 +58,7 @@
 
 .dsHeroTitle {
   margin: 16px 0 10px;
-  color: #211d38;
+  color: var(--app-ink-strong);
   font-size: clamp(26px, 3.4vw, 40px);
   font-weight: 800;
   line-height: 1.16;
@@ -87,8 +87,8 @@
   gap: 10px;
   padding: 0 20px;
   border-radius: 11px;
-  color: #fff;
-  background: linear-gradient(120deg, #5c3cdb, #7b5cf0);
+  color: var(--app-surface);
+  background: linear-gradient(120deg, #5c3cdb, var(--app-purple-bright));
   box-shadow: 0 10px 22px #6546e833;
   font-size: 14px;
   font-weight: 700;
@@ -104,7 +104,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #4c32c6;
+  color: var(--app-purple-dark);
   font-size: 14px;
   font-weight: 650;
   text-decoration: none;
@@ -141,7 +141,7 @@
   height: 34px;
   place-items: center;
   border-radius: 50%;
-  color: #fff;
+  color: var(--app-surface);
   background: #35b56f;
   font-size: 17px;
   box-shadow: 0 6px 14px #2f9d5f55;
@@ -153,13 +153,13 @@
 }
 
 .dsArtQty {
-  color: #211d38;
+  color: var(--app-ink-strong);
   font-size: 22px;
   font-weight: 800;
 }
 
 .dsArtEta {
-  color: #7a768e;
+  color: var(--app-slate-soft);
   font-size: 12px;
 }
 
@@ -186,7 +186,7 @@
 }
 
 .dsArtChip span {
-  color: #7b5cf0;
+  color: var(--app-purple-bright);
   font-size: 15px;
 }
 
@@ -220,7 +220,7 @@
   padding: 18px 20px;
   border: 1px solid var(--app-border);
   border-radius: 16px;
-  background: #fff;
+  background: var(--app-surface);
   box-shadow: 0 4px 14px #2c24500a;
 }
 
@@ -247,7 +247,7 @@
 
 .dsMetricValue {
   min-width: 0;
-  color: #211d38;
+  color: var(--app-ink-strong);
   font-size: 24px;
   font-weight: 800;
   line-height: 1.1;
@@ -262,27 +262,27 @@
 }
 
 .tonePurple {
-  color: #6546e8;
+  color: var(--app-purple);
   background: #efeaff;
 }
 .toneRed {
-  color: #e5484d;
-  background: #fdeaea;
+  color: var(--app-danger);
+  background: var(--app-danger-soft);
 }
 .toneBlue {
-  color: #3b82f6;
+  color: var(--app-info);
   background: #e7f0ff;
 }
 .toneGreen {
-  color: #15803d;
-  background: #e5f7ec;
+  color: var(--app-success);
+  background: var(--app-success-soft);
 }
 
 .trendUp {
-  color: #15803d;
+  color: var(--app-success);
 }
 .trendDown {
-  color: #e5484d;
+  color: var(--app-danger);
 }
 
 /* ---------- Main grid ---------- */
@@ -297,7 +297,7 @@
   min-width: 0;
   border: 1px solid var(--app-border);
   border-radius: 16px;
-  background: #fff;
+  background: var(--app-surface);
   box-shadow: 0 4px 14px #2c24500a;
 }
 
@@ -313,7 +313,7 @@
   display: flex;
   align-items: center;
   gap: 9px;
-  color: #211d38;
+  color: var(--app-ink-strong);
   font-size: 16px;
   font-weight: 750;
 }
@@ -344,7 +344,7 @@
 .dsTab {
   padding: 8px 2px 12px;
   border-bottom: 2px solid transparent;
-  color: #7a768e;
+  color: var(--app-slate-soft);
   font-size: 13px;
   font-weight: 600;
 }
@@ -355,8 +355,8 @@
 }
 
 .dsTab.isActive {
-  color: #e5484d;
-  border-bottom-color: #e5484d;
+  color: var(--app-danger);
+  border-bottom-color: var(--app-danger);
   font-weight: 750;
 }
 
@@ -388,14 +388,14 @@
 }
 
 .dsTable tbody tr:hover {
-  background: #faf9ff;
+  background: var(--app-violet-faint);
 }
 
 .dsProduct {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: #211d38;
+  color: var(--app-ink-strong);
   font-weight: 650;
 }
 
@@ -410,12 +410,12 @@
 }
 
 .dsSku {
-  color: #6546e8;
+  color: var(--app-purple);
   font-weight: 600;
 }
 
 .dsStockout {
-  color: #e5484d;
+  color: var(--app-danger);
   font-weight: 650;
 }
 
@@ -429,16 +429,16 @@
 }
 
 .badgeHigh {
-  color: #15803d;
-  background: #e5f7ec;
+  color: var(--app-success);
+  background: var(--app-success-soft);
 }
 .badgeMedium {
-  color: #b45309;
-  background: #fdf1dc;
+  color: var(--app-warning);
+  background: var(--app-warning-soft);
 }
 .badgeLow {
-  color: #e5484d;
-  background: #fdeaea;
+  color: var(--app-danger);
+  background: var(--app-danger-soft);
 }
 
 .dsRowBtn {
@@ -448,8 +448,8 @@
   padding: 0 14px;
   border: 1px solid #ded9f0;
   border-radius: 8px;
-  color: #4c32c6;
-  background: #fff;
+  color: var(--app-purple-dark);
+  background: var(--app-surface);
   font-size: 12px;
   font-weight: 650;
   text-decoration: none;
@@ -484,14 +484,14 @@
   height: 38px;
   place-items: center;
   border-radius: 11px;
-  color: #fff;
+  color: var(--app-surface);
   background: #35b56f;
   font-size: 18px;
 }
 
 .dsHealthState strong {
   display: block;
-  color: #15803d;
+  color: var(--app-success);
   font-size: 15px;
 }
 
@@ -513,14 +513,14 @@
 }
 
 .dsHealthRow span {
-  color: #6b677e;
+  color: var(--app-slate);
 }
 
 .dsHealthRow em {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #15803d;
+  color: var(--app-success);
   font-size: 12px;
   font-style: normal;
   font-weight: 600;
@@ -532,37 +532,37 @@
 }
 
 .dsHealthDot.isCritical {
-  background: #e5484d;
+  background: var(--app-danger);
 }
 
 .dsHealthState.isWarn strong {
-  color: #b45309;
+  color: var(--app-warning);
 }
 
 .dsHealthState.isCritical strong {
-  color: #e5484d;
+  color: var(--app-danger);
 }
 
 .dsHealthRow em.isWarn {
-  color: #b45309;
+  color: var(--app-warning);
 }
 
 .dsHealthRow em.isCritical {
-  color: #e5484d;
+  color: var(--app-danger);
 }
 
 .dsHealthRow em.isMuted {
-  color: #6b677e;
+  color: var(--app-slate);
 }
 
 .dsMetricTrend.isPlain {
-  color: #6b677e;
+  color: var(--app-slate);
   font-weight: 550;
 }
 
 .dsEmptyRow {
   padding: 18px 6px;
-  color: #6b677e;
+  color: var(--app-slate);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -589,7 +589,7 @@
 .dsBeta {
   padding: 2px 8px;
   border-radius: 999px;
-  color: #fff;
+  color: var(--app-surface);
   background: #f59e0b;
   font-size: 10px;
   font-weight: 700;
@@ -604,7 +604,7 @@
 }
 
 .dsBudget a {
-  color: #4c32c6;
+  color: var(--app-purple-dark);
   font-size: 13px;
   font-weight: 700;
   text-decoration: none;
@@ -642,7 +642,7 @@
   align-items: center;
   gap: 8px;
   margin: 0;
-  color: #211d38;
+  color: var(--app-ink-strong);
   font-size: 15px;
   font-weight: 750;
 }
@@ -669,7 +669,7 @@
 .dsSupplyStat strong {
   display: block;
   margin: 2px 0;
-  color: #211d38;
+  color: var(--app-ink-strong);
   font-size: 22px;
   font-weight: 800;
 }
@@ -688,9 +688,9 @@
   border-radius: 10px;
   color: #b7a9ec;
   background:
-    radial-gradient(circle at 30% 40%, #cbbdff 2px, transparent 3px),
-    radial-gradient(circle at 55% 60%, #cbbdff 2px, transparent 3px),
-    radial-gradient(circle at 72% 35%, #cbbdff 2px, transparent 3px),
+    radial-gradient(circle at 30% 40%, var(--app-violet-line) 2px, transparent 3px),
+    radial-gradient(circle at 55% 60%, var(--app-violet-line) 2px, transparent 3px),
+    radial-gradient(circle at 72% 35%, var(--app-violet-line) 2px, transparent 3px),
     linear-gradient(135deg, #f4f1ff, #ece7ff);
   font-size: 26px;
 }
@@ -712,7 +712,7 @@
 }
 
 .dsPoId {
-  color: #211d38;
+  color: var(--app-ink-strong);
   font-size: 14px;
   font-weight: 700;
 }
@@ -720,7 +720,7 @@
 .dsPoMeta {
   display: block;
   margin-top: 3px;
-  color: #7a768e;
+  color: var(--app-slate-soft);
   font-size: 12px;
 }
 
@@ -733,19 +733,19 @@
 }
 
 .pillActive {
-  color: #15803d;
-  background: #e5f7ec;
+  color: var(--app-success);
+  background: var(--app-success-soft);
 }
 .pillDraft {
-  color: #b45309;
-  background: #fdf1dc;
+  color: var(--app-warning);
+  background: var(--app-warning-soft);
 }
 .pillCritical {
-  color: #e5484d;
-  background: #fdeaea;
+  color: var(--app-danger);
+  background: var(--app-danger-soft);
 }
 .pillMuted {
-  color: #6b677e;
+  color: var(--app-slate);
   background: #f2f1f7;
 }
 
@@ -764,7 +764,7 @@
   border: 1px solid #eeeafc;
   border-radius: 12px;
   color: #4a465c;
-  background: #faf9ff;
+  background: var(--app-violet-faint);
   font-size: 12px;
   font-weight: 600;
   text-align: center;
@@ -790,7 +790,7 @@
   padding: 10px 14px;
   border: 1px solid #e8e2ff;
   border-radius: 14px;
-  background: linear-gradient(150deg, #faf9ff, #f1ecff);
+  background: linear-gradient(150deg, var(--app-violet-faint), #f1ecff);
 }
 
 .sidebarLinks {
@@ -804,7 +804,7 @@
   align-items: center;
   gap: 9px;
   padding: 6px 4px;
-  color: #6b677e;
+  color: var(--app-slate);
   font-size: 12px;
   text-decoration: none;
 }
@@ -839,14 +839,14 @@
   height: 60px;
   place-items: center;
   border-radius: 18px;
-  color: #7b5cf0;
+  color: var(--app-purple-bright);
   background: #efeaff;
   font-size: 28px;
 }
 
 .dsPlaceholder h1 {
   margin: 4px 0 0;
-  color: #211d38;
+  color: var(--app-ink-strong);
   font-size: 22px;
   font-weight: 800;
 }
@@ -854,7 +854,7 @@
 .dsPlaceholder p {
   max-width: 420px;
   margin: 0;
-  color: #6b677e;
+  color: var(--app-slate);
   font-size: 14px;
   line-height: 1.6;
 }
@@ -931,5 +931,24 @@
 
   .appNavLink {
     flex: 0 0 auto;
+  }
+}
+
+/* Phone portrait: collapse the remaining multi-column content primitives so nothing
+   gets cramped or clipped on narrow viewports. Wide tables already scroll via
+   .dsTableWrap; these rules only fire at <=560px, so desktop/tablet layout is untouched. */
+@media (max-width: 560px) {
+  .dsMetrics {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .dsQuick {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ds {
+    gap: 14px;
+    padding: 14px 12px 92px;
   }
 }

@@ -1,12 +1,39 @@
+/*
+ * mypi 设计令牌（单一来源）。约定：
+ *   - 布局/页面用 Polaris web components（`s-page` / `s-section` …）；
+ *   - 数据卡片 / 指标块 / 表格这类内容层用 `ds*` 原语（dashboard.css）；
+ *   - 两者一律从这里取色，不再各写各的十六进制。
+ * 下面每个 token 的值都等于收敛前代码里已经在用的字面量，替换是零视觉变化的；
+ * 近重复的渐变色阶（#f9f8ff/#efecff/#ddd6ff…）刻意保留原样，留待真实后台视觉验收再统一。
+ */
 :root {
   color-scheme: light;
+
+  /* core neutrals */
   --app-ink: #1b1930;
+  --app-ink-strong: #211d38;
   --app-muted: #716f84;
+  --app-slate: #6b677e;
+  --app-slate-soft: #7a768e;
   --app-border: #eceaf5;
-  --app-purple: #6546e8;
-  --app-purple-dark: #4c32c6;
   --app-surface: #fff;
   --app-background: #f8f8fc;
+
+  /* brand violet */
+  --app-purple: #6546e8;
+  --app-purple-bright: #7b5cf0;
+  --app-purple-dark: #4c32c6;
+  --app-violet-faint: #faf9ff;
+  --app-violet-line: #cbbdff;
+
+  /* status triads (fg / soft bg) */
+  --app-success: #15803d;
+  --app-success-soft: #e5f7ec;
+  --app-danger: #e5484d;
+  --app-danger-soft: #fdeaea;
+  --app-warning: #b45309;
+  --app-warning-soft: #fdf1dc;
+  --app-info: #3b82f6;
 }
 
 * {
