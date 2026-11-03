@@ -27,8 +27,8 @@ function event(
 
 const DAY = 24 * 60 * 60 * 1000;
 
-test("事件清单恰好 13 类且无重复；清单外一律非法", () => {
-  assert.equal(ANALYTICS_EVENT_TYPES.length, 13);
+test("事件清单恰好 17 类且无重复；清单外一律非法", () => {
+  assert.equal(ANALYTICS_EVENT_TYPES.length, 17);
   assert.equal(
     new Set(ANALYTICS_EVENT_TYPES).size,
     ANALYTICS_EVENT_TYPES.length,
@@ -36,6 +36,17 @@ test("事件清单恰好 13 类且无重复；清单外一律非法", () => {
   );
   assert.equal(isAnalyticsEventType("sync_completed"), true);
   assert.equal(isAnalyticsEventType("page_loaded"), false);
+});
+
+test("P1-5 补齐的四个漏斗事件都在清单内且合法", () => {
+  for (const type of [
+    "inventory_sync_started",
+    "onboarding_completed",
+    "recommendation_viewed",
+    "purchase_plan_exported",
+  ] as const) {
+    assert.equal(isAnalyticsEventType(type), true, type);
+  }
 });
 
 test("决策映射：四个人工动作各有事件，pending 不记", () => {

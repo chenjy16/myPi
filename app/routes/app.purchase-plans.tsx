@@ -153,6 +153,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         kind: "purchase_plan",
         rows: exportResult.rowCount,
       });
+      // 专用漏斗事件：区分「导出的是采购计划」这一步，与通用 csv_exported 并存。
+      trackEvent(shop, "purchase_plan_exported", {
+        planId: planId ?? null,
+        rows: exportResult.rowCount,
+      });
       return { exportResult };
     }
 

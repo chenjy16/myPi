@@ -5,13 +5,16 @@
  * 以 .ts 扩展名被 server 层与 node --test 共用。
  */
 
-/** Beta 需要的 13 类事件；新增要先想清楚对应哪个指标，不加「顺手记录」。 */
+/** Beta 需要的 17 类事件；新增要先想清楚对应哪个指标，不加「顺手记录」。 */
 export const ANALYTICS_EVENT_TYPES = [
   "app_installed",
   "dashboard_viewed",
+  "inventory_sync_started",
   "sync_completed",
+  "onboarding_completed",
   "settings_saved",
   "supplier_saved",
+  "recommendation_viewed",
   "advice_accepted",
   "advice_edited",
   "advice_ignored",
@@ -19,6 +22,7 @@ export const ANALYTICS_EVENT_TYPES = [
   "csv_exported",
   "purchase_plan_created",
   "purchase_plan_ordered",
+  "purchase_plan_exported",
   "feedback_submitted",
 ] as const;
 

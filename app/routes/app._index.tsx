@@ -7,7 +7,7 @@ import {
   getRecentRecommendationAudit,
   type DashboardVariant,
 } from "../inventory.server";
-import { trackDailyVisit } from "../analytics.server";
+import { ensureOnboardingCompletedTracked, trackDailyVisit } from "../analytics.server";
 import { deriveOnboardingSteps } from "../lib/onboarding";
 import { safeLoader } from "../lib/route-error";
 import { buildSyncFreshnessNotice } from "../lib/sync-freshness";
@@ -47,6 +47,12 @@ export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
       return status === "accepted" || status === "edited" || status === "ordered";
     }).length,
   });
+
+  // 引导全部走完时补记一次 onboarding_completed（每店仅一次）；fire-and-forget。
+  void ensureOnboardingCompletedTracked(
+    session.shop,
+    onboarding.every((step) => step.done),
+  );
 
   return { dashboard, recentDecisions, onboarding };
 });

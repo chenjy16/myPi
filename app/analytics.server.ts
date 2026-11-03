@@ -73,6 +73,49 @@ export async function trackDailyVisit(shop: string): Promise<void> {
   }
 }
 
+/**
+ * 每店每（UTC）天最多一条 recommendation_viewed：标记商家「看到过有可执行建议」这一漏斗节点。
+ * 与 dashboard_viewed 同样按天去重，避免每次翻页都把计数刷爆；count 记当天首次的建议条数。
+ */
+export async function trackRecommendationViewed(
+  shop: string,
+  count: number,
+): Promise<void> {
+  try {
+    const now = new Date();
+    const last = await db.analyticsEvent.findFirst({
+      where: { shop, type: "recommendation_viewed" },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    });
+    if (!shouldTrackToday(last?.createdAt ?? null, now)) return;
+    trackEvent(shop, "recommendation_viewed", { count });
+  } catch (error) {
+    createLogger({ shop }).error("recommendation view tracking failed", { error });
+  }
+}
+
+/**
+ * 引导完成时补记一次 onboarding_completed（每店只记一次，语义同 ensureInstallTracked）。
+ * `complete` 由调用方按当前看板推导；未完成时直接返回，不写库。
+ */
+export async function ensureOnboardingCompletedTracked(
+  shop: string,
+  complete: boolean,
+): Promise<void> {
+  if (!complete) return;
+  try {
+    const existing = await db.analyticsEvent.findFirst({
+      where: { shop, type: "onboarding_completed" },
+      select: { id: true },
+    });
+    if (existing) return;
+    trackEvent(shop, "onboarding_completed");
+  } catch (error) {
+    createLogger({ shop }).error("onboarding tracking failed", { error });
+  }
+}
+
 export type AdviceFeedbackRecord = {
   verdict: AdviceFeedbackVerdict;
   reason: AdviceFeedbackReason | null;

@@ -31,6 +31,7 @@ import {
   getLatestFeedbackByVariant,
   saveAdviceFeedback,
   trackEvent,
+  trackRecommendationViewed,
 } from "../analytics.server";
 import {
   FEEDBACK_CHOICE_LABELS,
@@ -116,6 +117,14 @@ export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
     session.shop,
     dashboard.variants.map((variant) => variant.variantId),
   );
+
+  // 有可执行建议时按天补记一条 recommendation_viewed（漏斗节点）；fire-and-forget 不拖慢首屏。
+  const recommendationCount = dashboard.variants.filter(
+    (variant) => variant.recommendation !== null,
+  ).length;
+  if (recommendationCount > 0) {
+    void trackRecommendationViewed(session.shop, recommendationCount);
+  }
 
   return {
     ...dashboard,
@@ -321,6 +330,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (await hasRunningJob(session.shop, "inventory-snapshot")) {
         return { notice: SYNC_ALREADY_RUNNING_NOTICE };
       }
+
+      // 记录一次同步发起（started→completed 可算同步耗时与卡死）；撞锁提前 return，不计。
+      trackEvent(session.shop, "inventory_sync_started", { trigger: "manual" });
 
       try {
         const result = await syncInventoryAndSales(
