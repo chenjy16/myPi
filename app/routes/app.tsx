@@ -25,8 +25,10 @@ const NAV_ITEMS = [
   { to: "/app/suppliers", label: "Suppliers", glyph: "☐" },
   { to: "/app/supply-chain", label: "Supply Chain", glyph: "⛓" },
   { to: "/app/data-health", label: "Data Health", glyph: "✓" },
-  { to: "/app/metrics", label: "Beta Metrics", glyph: "▤" },
+  { to: "/app/metrics", label: "Beta Metrics", glyph: "◔" },
   { to: "/app/settings", label: "Settings", glyph: "⚙" },
+  // Guide & docs 从侧栏页脚提升为主导航末位：它是真实内容页，不该藏在角落。
+  { to: "/app/docs", label: "Guide & docs", glyph: "?" },
 ];
 
 /** 嵌入式应用布局的鉴权：未登录会跳 OAuth；成功则把 apiKey 和店铺域名交给壳组件。 */
@@ -75,22 +77,6 @@ export default function App() {
               );
             })}
           </nav>
-          {/* 假 UI 清理：trial/Upgrade/外链帮助全部移除，Help 换成应用内真实文档入口 */}
-          <div className="sidebarFooter">
-            <div className="sidebarLinks">
-              <Link
-                className={`docsNavLink${
-                  location.pathname === "/app/docs" ? " isActive" : ""
-                }`}
-                to="/app/docs"
-                aria-current={
-                  location.pathname === "/app/docs" ? "page" : undefined
-                }
-              >
-                <span aria-hidden="true">?</span> Guide &amp; docs
-              </Link>
-            </div>
-          </div>
         </aside>
         <div className="appMain">
           <header className="appTopbar">

@@ -152,13 +152,49 @@ layer changed. The view rules:
 
 ## 5. Interaction rules (spec §8)
 
-- One primary action per page; destructive = danger styling + confirm dialog
-  (native `window.confirm` is being replaced by a shared dialog in Sprint 5).
+- One primary action per page; destructive actions confirm before submitting —
+  shared `ConfirmFetchForm` (`app/components/ui/confirm-fetch-form.tsx`), no
+  `window.confirm` left in app routes.
 - Every mutation: pending feedback (`LoadingState`) + success/failure result
   (`s-banner`); errors state the user action, never "Something went wrong".
 - Disabled controls explain why.
 - Keyboard: focus ring is global (`tokens.css :focus-visible`); do not remove
   outlines without a replacement.
+
+### 5a. Confirm dialog contract (Sprint 5)
+
+- `ConfirmFetchForm` wraps a `fetcher.Form`: submit is intercepted, a `<dialog>`
+  opens, and only Confirm re-submits via `requestSubmit()` with a one-shot
+  bypass. Pages keep their intent / planId / formKey bucketed-banner feedback
+  untouched; the action never knows a dialog existed.
+- Native `<dialog>` + `showModal()` instead of Polaris `s-modal`: React 18's
+  event delegation over custom elements is unreliable here (see the table
+  primitives' `.value` comments); `showModal` gives deterministic focus
+  trapping and Esc. Styles come only from tokens (`.confirmDialog*`).
+- Confirm button: `s-button tone="critical"` when `danger: true` (irreversible:
+  delete supplier, cancel plan, unbind SKU), `tone="auto"` otherwise (mark-ordered
+  moves data but is not destructive). Note: the Polaris *React* type narrows
+  `s-button` tone to `auto | neutral | critical` — there is no `variant="danger"`
+  and no `accent` tone on the React button; tone is the only axis for this.
+- Copy contract: heading says exactly what will happen (`Mark PP-12 as
+  ordered`), body states consequences and reversibility, confirm label starts
+  with a verb. Cancel/Esc/click-outside must never submit.
+
+### 5b. Result feedback — no toast
+
+Sprint 5 decision: outcomes stay in-page `s-banner`s bucketed per fetcher
+intent, not a transient toast. The merchant acts inside one page; a banner
+survives re-render and keeps the reference copy readable, while a toast
+disappears before slower DB round-trips finish. Do not add a toast library.
+
+### 5c. Navigation contract
+
+- The sidebar in `app.tsx` is one flat list (`NAV_ITEMS`) — every visible
+  primary route appears exactly once, each with a distinct glyph; no footer
+  link blocks duplicating nav entries. Feature-hidden routes (product copy)
+  stay out of the list while their flag is off.
+- Heading source stays single (`s-page heading` per §3c-1); nav labels are
+  sentence case matching each page's heading.
 
 ## 6. Migration order
 

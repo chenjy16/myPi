@@ -27,6 +27,7 @@ import {
 } from "../suppliers.server";
 import { registerReorderSuggestions } from "../inventory.server";
 import { trackEvent } from "../analytics.server";
+import { ConfirmFetchForm } from "../components/ui/confirm-fetch-form";
 import { EmptyState } from "../components/ui/empty-state";
 import { LoadingState } from "../components/ui/loading-state";
 import { SupplierActivityBadge } from "../components/ui/status-badge";
@@ -387,16 +388,13 @@ export default function SuppliersPage() {
                           {supplier.isActive ? "Pause" : "Activate"}
                         </s-button>
                       </fetcher.Form>
-                      <fetcher.Form
-                        method="post"
-                        onSubmit={(event) => {
-                          if (
-                            !window.confirm(
-                              `Delete “${supplier.name}”? ${supplier._count.variants} SKU binding(s) will fall back to store settings.`,
-                            )
-                          ) {
-                            event.preventDefault();
-                          }
+                      <ConfirmFetchForm
+                        fetcher={fetcher}
+                        confirm={{
+                          heading: `Delete ${supplier.name}`,
+                          body: `${supplier._count.variants} SKU binding(s) will fall back to store settings. This can't be undone from here.`,
+                          confirmLabel: "Delete supplier",
+                          danger: true,
                         }}
                       >
                         <input
@@ -412,7 +410,7 @@ export default function SuppliersPage() {
                         <s-button type="submit" variant="tertiary" disabled={isBusy}>
                           Delete
                         </s-button>
-                      </fetcher.Form>
+                      </ConfirmFetchForm>
                     </s-stack>
 
                     <details>
@@ -617,16 +615,13 @@ export default function SuppliersPage() {
                       </s-table-cell>
                       <s-table-cell>{termsLine}</s-table-cell>
                       <s-table-cell>
-                        <fetcher.Form
-                          method="post"
-                          onSubmit={(event) => {
-                            if (
-                              !window.confirm(
-                                "Unbind this variant? Advice for it falls back to store settings.",
-                              )
-                            ) {
-                              event.preventDefault();
-                            }
+                        <ConfirmFetchForm
+                          fetcher={fetcher}
+                          confirm={{
+                            heading: "Unbind this SKU",
+                            body: "Reorder advice for this variant falls back to the store-wide settings. You can bind it again at any time.",
+                            confirmLabel: "Unbind",
+                            danger: true,
                           }}
                         >
                           <input
@@ -642,7 +637,7 @@ export default function SuppliersPage() {
                           <s-button type="submit" variant="tertiary" disabled={isBusy}>
                             Unbind
                           </s-button>
-                        </fetcher.Form>
+                        </ConfirmFetchForm>
                       </s-table-cell>
                     </s-table-row>
                   );

@@ -1027,3 +1027,39 @@
     padding: 14px 12px 92px;
   }
 }
+
+/* ── ConfirmFetchForm（共享 UI 原语，design-system.md §5）─────────────────
+   原生 <dialog> 承载破坏性/不可逆操作的确认。top layer 自带堆叠顺序，
+   这里不需要 z-index；所有视觉值取自 tokens。 */
+.confirmDialog {
+  padding: var(--sp-6);
+  border: 1px solid var(--app-border);
+  border-radius: var(--radius-md);
+  background: var(--app-surface);
+  color: var(--app-ink);
+  box-shadow: var(--shadow-lg);
+  max-width: min(420px, calc(100vw - 2 * var(--sp-6)));
+}
+
+.confirmDialog::backdrop {
+  background: color-mix(in srgb, var(--app-ink) 45%, transparent);
+}
+
+.confirmDialogBody {
+  display: grid;
+  gap: var(--sp-2);
+  font-size: 14px;
+}
+
+.confirmDialogBody p {
+  margin: 0;
+  color: var(--app-muted);
+  line-height: 1.5;
+}
+
+.confirmDialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-top: var(--sp-4);
+}

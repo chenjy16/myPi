@@ -37,6 +37,7 @@ import {
   updatePlanLineQuantity,
   updatePlanMeta,
 } from "../purchase-plans.server";
+import { ConfirmFetchForm } from "../components/ui/confirm-fetch-form";
 import { EmptyState } from "../components/ui/empty-state";
 import { FactGrid } from "../components/ui/fact-grid";
 import { LoadingState } from "../components/ui/loading-state";
@@ -729,7 +730,14 @@ export default function PurchasePlansPage() {
                 </fetcher.Form>
                 {isOpen && (
                   <>
-                    <fetcher.Form method="post">
+                    <ConfirmFetchForm
+                      fetcher={fetcher}
+                      confirm={{
+                        heading: `Mark ${plan.reference} as ordered`,
+                        body: `The ${plan.lines.length} matching suggestion(s) on the Replenishment page will move to Ordered. This can't be undone from here.`,
+                        confirmLabel: "Mark ordered",
+                      }}
+                    >
                       <input
                         type="hidden"
                         name="intent"
@@ -740,39 +748,29 @@ export default function PurchasePlansPage() {
                         type="submit"
                         variant="primary"
                         disabled={isBusy}
-                        onClick={(event) => {
-                          if (
-                            !window.confirm(
-                              `Mark ${plan.reference} as ordered? The ${plan.lines.length} matching suggestion(s) on the Replenishment page will move to Ordered. This can't be undone from here.`,
-                            )
-                          ) {
-                            event.preventDefault();
-                          }
-                        }}
                       >
                         Mark ordered
                       </s-button>
-                    </fetcher.Form>
-                    <fetcher.Form method="post">
+                    </ConfirmFetchForm>
+                    <ConfirmFetchForm
+                      fetcher={fetcher}
+                      confirm={{
+                        heading: `Cancel ${plan.reference}`,
+                        body: "Its suggestions go back to the planning pool. This can't be undone from here.",
+                        confirmLabel: "Cancel plan",
+                        danger: true,
+                      }}
+                    >
                       <input type="hidden" name="intent" value="cancel-plan" />
                       <input type="hidden" name="planId" value={plan.id} />
                       <s-button
                         type="submit"
                         variant="tertiary"
                         disabled={isBusy}
-                        onClick={(event) => {
-                          if (
-                            !window.confirm(
-                              `Cancel ${plan.reference}? Its suggestions go back to the planning pool. This can't be undone from here.`,
-                            )
-                          ) {
-                            event.preventDefault();
-                          }
-                        }}
                       >
                         Cancel plan
                       </s-button>
-                    </fetcher.Form>
+                    </ConfirmFetchForm>
                   </>
                 )}
               </s-stack>
