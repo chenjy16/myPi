@@ -5,12 +5,23 @@ import { login } from "../../shopify.server";
 
 import styles from "./styles.module.css";
 
-/** 非嵌入落地页：已带 shop 参数则进 /app，否则显示填店名登录表单。 */
+/**
+ * 非嵌入落地页 / 首次安装入口。
+ * - 嵌入请求（带 embedded=1，已安装）：沿用模板行为，进 /app 走 token-exchange 会话。
+ * - 顶层带 shop（未安装首次入口，如审核从应用页直接打开）：转 /auth/login，
+ *   由官方 login() 跳到 Shopify 原生 /admin/oauth/install 触发授权页。
+ *   直接进 /app 会在没会话时强起 OAuth，旧 redirect_urls 对不上就会落 admin 404。
+ * - 无 shop：显示手动输入店名的登录表单。
+ */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
+  const shop = url.searchParams.get("shop");
 
-  if (url.searchParams.get("shop")) {
-    throw redirect(`/app?${url.searchParams.toString()}`);
+  if (shop) {
+    if (url.searchParams.get("embedded")) {
+      throw redirect(`/app?${url.searchParams.toString()}`);
+    }
+    throw redirect(`/auth/login?shop=${encodeURIComponent(shop)}`);
   }
 
   return { showForm: Boolean(login) };

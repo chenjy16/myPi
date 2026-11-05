@@ -1,0 +1,7 @@
+{
+	admin off
+}
+
+https://mypier.duckdns.org:4430 {
+	reverse_proxy web:3000
+}

@@ -1,0 +1,36 @@
+services:
+  web:
+    build: .
+    container_name: mypi-web
+    restart: unless-stopped
+    env_file: .env
+
+  worker:
+    build: .
+    container_name: mypi-worker
+    command: npm run docker-worker
+    restart: unless-stopped
+    env_file: .env
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "worker.mjs"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: mypi-caddy
+    command: caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "4430:4430"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -45,10 +45,12 @@ api_version = "2026-10"
   compliance_topics = ["shop/redact"]
 
 [auth]
-redirect_urls = ["https://mypier.duckdns.org/api/auth"]
+# OAuth 回调的真实路径：authPathPrefix="/auth"（app/shopify.server.ts），库按
+# `{prefix}/callback` 拼 redirect_uri。旧值 /api/auth 是模板残留，代码里没有对应
+# 路由，导致首次安装的 redirect_uri 校验被 Shopify 拒绝、落到 admin 404。
+redirect_urls = ["https://mypier.duckdns.org/auth/callback"]
 
 [build]
-include_config_on_deploy = true
 # 生产 URL 固定在 RackNerd 域名上；防止本地 `shopify app dev` 启动时
 # 把 application_url 冲成临时隧道地址，连带打断线上商家的回调与 webhook。
 # 需要本地联调时再临时改回 true，或为 dev 单独 link 一个 app。
