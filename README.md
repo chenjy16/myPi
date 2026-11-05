@@ -31,6 +31,7 @@ modify inventory counts; "Mark ordered" only updates in-app state and its audit 
 Full architecture, data flow, deployment topology and production gaps:
 [architecture & deployment](./docs/architecture-and-deployment.md) ·
 [detailed design](./docs/detailed-design.md) ·
+[user guide](./docs/user-guide.md) ·
 [beta plan](./docs/beta-plan.md) ·
 [release runbook](./docs/release-runbook.md) ·
 [stage reports](./docs/reports).
