@@ -38,7 +38,7 @@ Prisma `migrate deploy` 只向前，**没有自动回滚**。因此：
    WHERE table_name = 'RecommendationAudit' AND column_name IN ('reason','requestKey');
   ```
 
-- **本地网络限制**：代理 fake-IP 会劫持 `*.pooler.supabase.com` 的 DNS（返回 `198.18.x.x`，`nc -z` 假通过、Prisma P1001）。单次绕行：`dig +short @1.1.1.1 <pooler-host>` 取真实 IP，临时替换 `DATABASE_URL` 主机名执行 `prisma migrate deploy`，不改 `.env`。CI / 服务器网络不经该代理，无需绕行。
+- **本地网络限制**：代理（Shadowrocket TUN + fake-IP）会劫持 `*.pooler.supabase.com` 的 DNS（返回 `198.18.x.x`，`nc -z` 假通过）并抢占第一默认路由，5432 裸 TCP 被代理节点丢弃，Prisma 报 P1001。根治办法（2026-11-05 验证）：在**实际生效的代理配置**（macOS Shadowrocket 为 配置 → default.conf → 通用 → 「跳过代理」）加入 `*.supabase.com`、`*.supabase.co` 后断开重连；这些域名的连接由 TUN 直连出网，浏览器走系统 HTTP 代理访问隧道的行为不受影响。注意：「兼容模式」开关只加回真实网关路由、不撤销 utun4 默认路由，无法解决本问题；旧「dig 真实 IP 临时替换 DATABASE_URL」绕行法在 TUN 抢路由后同样失效（真实 IP 流量照样进 utun4）。唯一可信判据是 `npx prisma migrate status` 报 up to date（DNS 仍回 198.18.x 不代表未修好）。CI / 服务器网络不经该代理，无需任何处理。
 
 ## 4. 回滚流程
 
