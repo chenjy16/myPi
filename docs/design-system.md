@@ -31,7 +31,18 @@ Rules:
   a status is always color + text label.
 - Spacing: 4px grid (`--sp-1..--sp-12`). Typography scale `--fs-xs..--fs-kpi`.
 - Breakpoints (contract): sm 560 · md 680 · lg 900 · xl 1180.
-  Verification viewports: 390 / 768 / 1280 / 1440.
+  Verification viewports: 390 / 768 / 1280 / 1440. (Sprint 6: the off-contract
+  820px block was folded into md 680; the only remaining `@media` widths in the
+  app stylesheets are 560 / 680 / 900 / 1180.)
+- **Legacy chrome values (Sprint 6 CSS drain).** The app shell, History task
+  center, shared metric tone and the ErrorBoundary card predate the neutral
+  palette and use a violet-gray family. Those literal colors are now registered
+  here verbatim as `--app-shell-*`, `--app-hist-*`, `--app-tone-*`, `--app-eb-*`
+  and two shadow tokens (`--app-shadow-card`, `--app-shadow-bottom-bar`) so no
+  page/style owns a raw hex. They are **byte-identical** — zero visual change —
+  and are explicitly NOT the neutral palette. Converging them onto
+  `--app-ink/muted/border/…` is a separate, visually-verified design decision
+  and must never be done by silently swapping one token for another.
 
 ## 3. Shared primitives (app/components/ui/)
 
@@ -196,9 +207,43 @@ disappears before slower DB round-trips finish. Do not add a toast library.
 - Heading source stays single (`s-page heading` per §3c-1); nav labels are
   sentence case matching each page's heading.
 
-## 6. Migration order
+## 6. Migration order — complete
 
 Sprint 2 Replenishment (reference) → Sprint 3 Home/DataHealth/Settings →
 Sprint 4 PurchasePlans/Suppliers/SupplyChain → Sprint 5 Docs/shell/details →
-Sprint 6 responsive+a11y+regression+CSS drain (184 shell hex + 55 gradient
-shades tracked in the audit report).
+Sprint 6 responsive + a11y + regression + CSS drain. All product pages now render
+through the `s-page` skeleton with tokens-only custom display primitives.
+
+## 7. CSS drain (Sprint 6, done)
+
+Discipline (safe convergence, per `docs/ui-audit-report.md` §3.2 and memory
+`CSS 安全收敛与死码清理规范`):
+
+1. **Delete only verified-dead rules.** Every removed selector had 0 matches in
+   a full `app/**` grep. The Home hero, overview/feature/summary cards,
+   bottom-info/tip/connection pills, sidebar footer, and all Settings / Suppliers
+   / Purchase-Plans / Supply-Chain legacy tables were dead after Sprints 3–5
+   migrated those pages to `s-*`.
+   - `app-shell.css`: 1625 → 494 lines.
+   - `dashboard.css`: 1066 → 287 lines. Kept: metric cards (Home + Beta Metrics
+   share `dsMetrics`), the pill/status-tone contract, and the shared
+   feedback/toolbar/confirm primitives.
+2. **Keep the `lib/status` + `tests/status.test.ts` pill contract.** `.dsPill` /
+   `.pill*` are not rendered (badges use `s-badge`) but `TONE_CLASS` and the test
+   suite assert the tone→class mapping as the single source of truth, so their
+   CSS stays in lock-step. `.badge*` / `.dsBadge` / `.trendUp/Down` had no such
+   guard and were removed.
+3. **Byte-identical token swap.** After dead-code removal, every remaining literal
+   hex in both stylesheets was replaced with a `var()` whose registered value is
+   character-for-character identical (script asserted exact match counts before
+   each swap). Post-drain bare-hex count outside `tokens.css`: **0**.
+4. **No silent gradient/palette merge.** Off-palette chrome colors were registered
+   as legacy tokens (§2), not folded into the neutral palette.
+5. **Breakpoint convergence + global a11y.** Non-contract 820px folded into md 680
+   (metrics 3→2→1 col ladder preserved at 1180/680/560). Global `:focus-visible`
+   and `prefers-reduced-motion` live in `tokens.css`; `<dialog>` confirm keeps
+   native focus-trap/Esc; all `<img>` have `alt`; status is always color + text.
+
+Evidence gates (all green): `typecheck` · `lint` · `test` (199 pass / 0 fail /
+5 skip) · `build` · `worker:build`. Built CSS contains 0 of the 13 sampled dead
+selectors and does contain the surviving live + pill selectors and new tokens.

@@ -37,6 +37,60 @@
   --app-purple-dark: #4c32c6;
   --app-violet-line: #cbbdff;
 
+  /* Sprint 6 CSS drain: byte-identical registrations for the app shell +
+     History task-center + ds metric layer. These are LEGACY chrome values —
+     they reproduce the pre-token violet-gray palette exactly (zero visual
+     change). Convergence onto the Shopify-admin palette above is a separate,
+     visually-verified decision and must not be done by swapping tokens. */
+  --app-shell-nav-ink: #5e5b72;
+  --app-shell-nav-hover-bg: #f5f2ff;
+  --app-shell-nav-active-bg: #eee9ff;
+  --app-shell-logo-bg: #f2eefe;
+  --app-shell-topbar-bg: #ffffffed;
+  --app-shell-chip-border: #eeedf4;
+  --app-shell-chip-ink: #555267;
+  --app-shell-chip-mark-bg: #79b96a;
+  --app-shell-heading-ink: #1e1b31;
+  --app-shell-body-ink: #5e5a72;
+  --app-shadow-card: 0 4px 14px #2c24500a;
+  --app-shadow-bottom-bar: 0 -5px 20px #2c24500d;
+
+  --app-hist-table-border: #efedf5;
+  --app-hist-cell-line: #f0eef5;
+  --app-hist-head-ink: #706d80;
+  --app-hist-head-bg: #f8f7fc;
+  --app-hist-cell-ink: #575469;
+  --app-hist-strong-ink: #29263d;
+  --app-hist-accent: #8c62ed;
+  --app-hist-status-bg: #f0eff5;
+  --app-hist-status-ink: #686478;
+  --app-hist-ok-ink: #218754;
+  --app-hist-ok-bg: #e5f7ed;
+  --app-hist-warn-ink: #8a6413;
+  --app-hist-warn-bg: #fff4d8;
+  --app-hist-bad-ink: #a34040;
+  --app-hist-bad-bg: #fdeaea;
+  --app-hist-ghost-border: #dedbea;
+  --app-hist-ghost-ink: #57516d;
+  --app-hist-ghost-hover: #b6a8ef;
+  --app-hist-empty-border: #ded9ef;
+  --app-hist-empty-bg: #fbfaff;
+  --app-hist-empty-icon: #967bed;
+  --app-hist-empty-title: #302c44;
+  --app-hist-meta-ink: #858196;
+  --app-hist-field-border: #d6d4de;
+  --app-hist-field-ink: #3f3d52;
+
+  --app-tone-purple-bg: #efeaff;
+  --app-tone-blue-bg: #e7f0ff;
+
+  /* Error-boundary card (app.tsx inline styles, same legacy registration). */
+  --app-eb-card-border: #eceaf5;
+  --app-eb-card-ink: #1b1930;
+  --app-eb-shadow: #2c24500a;
+  --app-eb-text-ink: #9c3e3e;
+  --app-eb-hint-ink: #716f84;
+
   /* status (fg / soft bg pairs); never color-only — always with text */
   --app-success: #008060;
   --app-success-soft: #e3f1ec;

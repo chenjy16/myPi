@@ -155,16 +155,17 @@ function describeRouteError(error: unknown): string {
   return `${safe.message} (Reference: ${safe.kind})`;
 }
 
+/* 颜色全部走 tokens.css（Sprint 6 drain：此处曾是裸 hex，值以 var 引用，渲染不变）。 */
 const ERROR_BOUNDARY_STYLE: CSSProperties = {
   margin: "40px auto",
   maxWidth: 560,
   padding: "22px 24px",
-  border: "1px solid #eceaf5",
-  borderLeft: "4px solid #6546e8",
+  border: "1px solid var(--app-eb-card-border)",
+  borderLeft: "4px solid var(--app-purple)",
   borderRadius: 14,
-  background: "#fff",
-  boxShadow: "0 4px 14px #2c24500a",
-  color: "#1b1930",
+  background: "var(--app-surface)",
+  boxShadow: "0 4px 14px var(--app-eb-shadow)",
+  color: "var(--app-eb-card-ink)",
   fontFamily:
     "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   fontSize: 14,
@@ -173,7 +174,7 @@ const ERROR_BOUNDARY_STYLE: CSSProperties = {
 
 const ERROR_BOUNDARY_TEXT_STYLE: CSSProperties = {
   margin: "10px 0 0",
-  color: "#9c3e3e",
+  color: "var(--app-eb-text-ink)",
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
   fontSize: 13,
   whiteSpace: "pre-wrap",
@@ -182,7 +183,7 @@ const ERROR_BOUNDARY_TEXT_STYLE: CSSProperties = {
 
 const ERROR_BOUNDARY_HINT_STYLE: CSSProperties = {
   margin: "12px 0 0",
-  color: "#716f84",
+  color: "var(--app-eb-hint-ink)",
   fontSize: 12,
 };
 
