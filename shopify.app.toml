@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "09245d607cee07f382950e6b96a98922"
-application_url = "https://shopify.dev/apps/default-app-home"
+application_url = "https://mypier.duckdns.org"
 embedded = true
 name = "mypi"
 
@@ -45,8 +45,11 @@ api_version = "2026-10"
   compliance_topics = ["shop/redact"]
 
 [auth]
-redirect_urls = ["https://shopify.dev/apps/default-app-home/api/auth"]
+redirect_urls = ["https://mypier.duckdns.org/api/auth"]
 
 [build]
 include_config_on_deploy = true
-automatically_update_urls_on_dev = true
+# 生产 URL 固定在 RackNerd 域名上；防止本地 `shopify app dev` 启动时
+# 把 application_url 冲成临时隧道地址，连带打断线上商家的回调与 webhook。
+# 需要本地联调时再临时改回 true，或为 dev 单独 link 一个 app。
+automatically_update_urls_on_dev = false
