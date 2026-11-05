@@ -243,6 +243,15 @@ Discipline (safe convergence, per `docs/ui-audit-report.md` §3.2 and memory
    (metrics 3→2→1 col ladder preserved at 1180/680/560). Global `:focus-visible`
    and `prefers-reduced-motion` live in `tokens.css`; `<dialog>` confirm keeps
    native focus-trap/Esc; all `<img>` have `alt`; status is always color + text.
+6. **On-device verification (Sprint 6 close-out).** Responsive matrix shot in the
+   admin shell at 1440/1280/768/390 across Home, Replenishment, History, Beta
+   Metrics, Data Health, Settings, Docs: column ladders match the converged
+   contract (1440/1280 → 5, 768 → 3 + icon rail, 390 → 1 + bottom nav strip),
+   focus ring visible via Tab-only walk, zero console errors. `FeatureDisabledPage`
+   links were aligned to `s-link` in the same pass. Known pre-existing polish
+   item (rules byte-unchanged by the drain): in multi-column metric layouts the
+   `Estimated inventory value` figure ellipsizes (`CN…`) because `.dsMetricValue`
+   keeps `nowrap + ellipsis`; full value shows at 390 single-column.
 
 Evidence gates (all green): `typecheck` · `lint` · `test` (199 pass / 0 fail /
 5 skip) · `build` · `worker:build`. Built CSS contains 0 of the 13 sampled dead
