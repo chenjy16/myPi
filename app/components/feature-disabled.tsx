@@ -1,5 +1,3 @@
-import { Link } from "react-router";
-
 /**
  * 功能开关关闭时的显式停用页。
  * 模板时代这类页面会静默重定向，商家点进来只会看到一次无声跳转；
@@ -22,15 +20,12 @@ export function FeatureDisabledPage({
         </p>
         <p className="dsEmptyRow">
           Need this feature in your day-to-day purchasing? Send the team a note
-          through{" "}
-          <Link to="/app/docs" style={{ fontWeight: 700 }}>
-            Guide &amp; docs
-          </Link>{" "}
-          — feedback volume decides what we build next. Meanwhile the
-          replenishment workflow is fully available:
+          through <s-link href="/app/docs">Guide &amp; docs</s-link> — feedback
+          volume decides what we build next. Meanwhile the replenishment
+          workflow is fully available:
         </p>
         <p className="dsEmptyRow">
-          <Link to="/app/inventory">Open Replenishment →</Link>
+          <s-link href="/app/inventory">Open Replenishment →</s-link>
         </p>
       </s-section>
     </s-page>
