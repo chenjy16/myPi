@@ -10,6 +10,7 @@ import db from "../db.server";
 import { authenticate } from "../shopify.server";
 import { trackEvent } from "../analytics.server";
 import { toSafeError } from "../lib/app-error";
+import { createLogger } from "../lib/logger";
 import { safeLoader } from "../lib/route-error";
 import {
   DEFAULT_REPLENISHMENT_SETTINGS,
@@ -80,6 +81,8 @@ export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
 });
 
 /** 两类操作：保存补货参数（校验后落库并按需重算）、测试模型连接。 */
+const logger = createLogger({ component: "route.settings" });
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const formData = await request.formData();
@@ -106,7 +109,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return { saved: validation.value, recalculation: result };
     } catch (error) {
       const safe = toSafeError(error);
-      console.error("[mypi] replenishment settings save failed", {
+      logger.error("replenishment settings save failed", {
         kind: safe.kind,
         detail: safe.detail,
       });

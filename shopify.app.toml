@@ -11,6 +11,15 @@ name = "mypi"
 # 重新开放文案时再把 write_products 加回来（旧值：
 # scopes = "read_products,write_products,read_inventory,read_orders,read_locations"）。
 # 权限最小化本身就是上架审核项，多要一个写权限要多解释一遍。
+#
+# P4-06（自动化写动作）待扩值——保护数据审批 + Partners 后台确认后按最小面逐步添加：
+#   tags.add / tags.remove 对 Order 目标 → write_orders
+#   tags.add / tags.remove 对 Customer 目标 → write_customers（+ read_customers）
+#   tags.add / tags.remove 对 Product 目标 → write_products
+#   product.updateStatus → write_products
+# 未扩前 automations 列表/详情/向导页会挂 ScopeGapBanner（app/lib/scope-guard.ts）
+# 提示重授权；动作相关的自动化不会静默运行。逐 action→scope 映射与解锁步骤
+# 见 docs/V2-P4-APPROVAL-PACK.md。
 scopes = "read_products,read_inventory,read_orders,read_locations"
 
 [webhooks]
@@ -31,6 +40,18 @@ api_version = "2026-10"
   # orders/create 与 orders/cancelled 属于 protected customer data 主题，未通过
   # Partners 后台的 Customer data protection 审批前无法订阅（会让 shopify app dev 启动失败）。
   # 审批通过后再打开这两条订阅，路由 app/routes/webhooks.orders.*.tsx 已就位。
+  # 审批通过后取消以下注释即可解锁直投（当前保持注释态，配合既有 `shopify app dev` 降级做法）：
+  #   [[webhooks.subscriptions]]
+  #   uri = "/webhooks/orders/create"
+  #   topics = ["orders/create"]
+  #
+  #   [[webhooks.subscriptions]]
+  #   uri = "/webhooks/orders/cancelled"
+  #   topics = ["orders/cancelled"]
+  #
+  # orders/paid 与 customers/create 同样属 protected customer data，但尚无对应路由；
+  # customers/* 还需额外 read_customers scope（当前 scopes 未含）。触发登记见 app/lib/trigger-registry.ts，
+  # 逐 topic 申请文案与恢复步骤见 docs/V2-P4-APPROVAL-PACK.md。
 
   [[webhooks.subscriptions]]
   uri = "/webhooks/customers/data_request"

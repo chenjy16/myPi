@@ -5,13 +5,65 @@
  * 把散落的 `console.*` 折成**一行一个 JSON**，带稳定的 `ts/level/msg` 与调用方绑定的上下文
  * （最主要的是 `shop` 这条租户轴，其次可选 `requestId`）。日志平台按 JSON 行天然可解析、可按 shop 过滤。
  *
- * 安全边界：logger 只负责序列化，不判断敏感与否——**调用方决定传什么**。绝不要把 token / 密钥塞进 context。
- * Error 一律只取其 message 落地，避免堆栈里夹带的对象图被整个 stringify。
+ * 安全边界（P4-11）：logger 自带键名黑名单兜底脱敏——命中 secret/token/密码/认证头/API key/
+ * 客户联系方式等敏感键名的值一律折成 `[redacted]`，深浅嵌套都拦。但这只是最后一道网：
+ * **调用方仍应决定不传什么**，不要把真实密钥当日志字段使。Error 一律只取其 message 落地，
+ * 避免堆栈里夹带的对象图被整个 stringify。
  */
 
 export type LogLevel = "info" | "warn" | "error";
 
 export type LogContext = Record<string, unknown>;
+
+/** 命中即折敏的键名子串（对小写化后的键做包含判定）；`secretsEncrypted` 由 secret 子串覆盖。 */
+export const SECRET_KEY_PATTERNS: readonly string[] = [
+  "secret",
+  "token",
+  "authorization",
+  "api_key",
+  "apikey",
+  "password",
+  "passwd",
+  "client_credentials",
+  "credentials",
+  "email",
+  "phone",
+];
+
+export const REDACTED_PLACEHOLDER = "[redacted]";
+
+/** 键名是否命中黑名单：小写化 + 子串包含（accessToken / SHOPIFY_API_KEY / secretsEncrypted 都能拦）。 */
+export function isSensitiveKey(
+  key: string,
+  patterns: readonly string[] = SECRET_KEY_PATTERNS,
+): boolean {
+  const normalized = key.toLowerCase();
+  return patterns.some((pattern) => normalized.includes(pattern));
+}
+
+/**
+ * 深度折敏：命中敏感键的值（含整个子树）折成占位串；返回新对象，不改入参。
+ * 纯函数单独导出，供单测与其它需要落日志/落审计的场景复用。
+ */
+export function redactContext<T>(
+  value: T,
+  patterns: readonly string[] = SECRET_KEY_PATTERNS,
+): T {
+  const walk = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(walk);
+    if (node && typeof node === "object") {
+      return Object.fromEntries(
+        Object.entries(node as Record<string, unknown>).map(([k, v]) =>
+          isSensitiveKey(k, patterns)
+            ? [k, REDACTED_PLACEHOLDER]
+            : [k, walk(v)],
+        ),
+      );
+    }
+    return node;
+  };
+  return walk(value) as T;
+}
 
 /** 单条日志的输入；`time` 便于测试注入，运行期默认取当前时刻。 */
 export type LogInput = {
@@ -38,7 +90,12 @@ export function formatLogEntry(input: LogInput): string {
   const entry: LogContext = { ts: time.toISOString(), level, msg: message };
   for (const [key, value] of Object.entries(context)) {
     if (key === "ts" || key === "level" || key === "msg") continue; // 保留字不可被上下文覆盖
-    entry[key] = normalizeValue(value);
+    if (isSensitiveKey(key)) {
+      entry[key] = REDACTED_PLACEHOLDER; // 顶层敏感键整值折掉，不再往里 walk
+      continue;
+    }
+    // 非敏感键：先 Error → 可序列化形状，再对子树里的敏感键折敏。
+    entry[key] = redactContext(normalizeValue(value));
   }
   return JSON.stringify(entry);
 }

@@ -15,6 +15,14 @@ import { createLogger } from "../app/lib/logger";
 const SNAPSHOT_CRON = process.env.WORKER_SNAPSHOT_CRON ?? "15 * * * *";
 /** 销量重建节奏：默认每天 03:00（UTC）。 */
 const SALES_CRON = process.env.WORKER_SALES_CRON ?? "0 3 * * *";
+/** V2 自动化事件消费节奏（P1-10）：默认每 2 分钟；Phase 1 只认领+记日志，执行器是 no-op stub。 */
+const AUTOMATION_CRON = process.env.WORKER_AUTOMATION_CRON ?? "*/2 * * * *";
+/** 投递去重表 TTL 清理节奏（P1-11）：默认每小时第 45 分钟。 */
+const DELIVERY_PRUNE_CRON = process.env.WORKER_DELIVERY_PRUNE_CRON ?? "45 * * * *";
+/** 执行史保留清理节奏（P4-10）：默认每天 04:30（UTC），错开 03:00 的销量重建。 */
+const RETENTION_PRUNE_CRON = process.env.WORKER_RETENTION_PRUNE_CRON ?? "30 4 * * *";
+/** 漏投对账节奏（P4-13）：默认每 30 分钟；实际是否执行由 RECONCILE_ENABLED 决定（默认关）。 */
+const RECONCILE_CRON = process.env.WORKER_RECONCILE_CRON ?? "*/30 * * * *";
 
 // worker 侧一条绑定了 component 的结构化 logger；log/logError 只是保留原调用签名的薄封装。
 const logger = createLogger({ component: "worker" });
@@ -93,13 +101,19 @@ async function main(): Promise<void> {
 
   const [
     { schedule, validate },
-    prismaModule, shopifyModule, inventoryModule, jobsModule] =
+    prismaModule, shopifyModule, inventoryModule, jobsModule, queueModule, deliveryModule, consumeModule, retentionModule, reconcileModule, reconcilePolicyModule] =
     await Promise.all([
       import("node-cron"),
       import("../app/db.server"),
       import("../app/shopify.server"),
       import("../app/inventory.server"),
       import("../app/sync-jobs.server"),
+      import("../app/execution-queue.server"),
+      import("../app/webhook-delivery.server"),
+      import("../app/automation-engine/consume.server"),
+      import("../app/execution-log.server"),
+      import("../app/reconcile.server"),
+      import("../app/lib/reconcile-policy"),
     ]);
   const prisma = prismaModule.default;
   prismaClient = prisma;
@@ -155,9 +169,113 @@ async function main(): Promise<void> {
     }
   };
 
+  /**
+   * P1-10：消费自动化执行队列。Phase 1 只做「认领→记日志→收尾」，执行器是 no-op stub；
+   * AUTOMATION_EXECUTION_ENABLED=true 之前不会有任何副作用动作（PRD P6 Safe by Default）。
+   * 一次排程最多消化 BATCH 条，防止单轮扫描把池子占死；超租约残留由 claimNextEvent 内部回收。
+   */
+  const AUTOMATION_BATCH = Number(process.env.WORKER_AUTOMATION_BATCH ?? 20);
+  const sweepAutomations = async (): Promise<void> => {
+    const shops = await installedShops(prisma);
+    const executionEnabled = process.env.AUTOMATION_EXECUTION_ENABLED === "true";
+    let claimedTotal = 0;
+    for (const shop of shops) {
+      for (let i = 0; i < AUTOMATION_BATCH; i += 1) {
+        try {
+          const claimed = await queueModule.claimNextEvent(shop);
+          if (!claimed) break;
+          claimedTotal += 1;
+          log(
+            `automation claimed event for ${shop}: ${claimed.event.topic} ${claimed.event.entityId ?? "-"}`,
+            { jobId: claimed.jobId, executorEnabled: executionEnabled },
+          );
+          // 执行器开关（PRD P6 Safe by Default）：关闭时只认领+收尾，绝不发任何 Mutation；
+          // 打开时才走 P2-12 全链路（匹配→防循环前置→逐步执行→落库）。
+          if (executionEnabled) {
+            const { admin } = await unauthenticated.admin(shop);
+            const outcomes = await consumeModule.processClaimedEvent(claimed.event, {
+              admin,
+              requestSource: `automation:worker:${claimed.jobId}`,
+            });
+            log(`automation executed for ${shop}`, {
+              jobId: claimed.jobId,
+              results: outcomes.map((o) => o.status),
+            });
+          }
+          await queueModule.completeExecutionJob(claimed.jobId, true);
+        } catch (error) {
+          logError(`automation sweep failed for ${shop}`, error);
+          break;
+        }
+      }
+    }
+    if (claimedTotal > 0) log(`automation sweep claimed ${claimedTotal} event(s)`);
+  };
+
+  /** P1-11：投递去重表按 TTL（默认 24h）瘦身，防无界增长。 */
+  const pruneDeliveries = async (): Promise<void> => {
+    try {
+      const count = await deliveryModule.pruneOldDeliveries();
+      if (count > 0) log(`pruned ${count} expired webhook deliveries`);
+    } catch (error) {
+      logError("delivery prune failed", error);
+    }
+  };
+
+  /** P4-10：执行史超出保留窗口（EXECUTION_RETENTION_DAYS，默认 180 天）的旧行先掩蔽客户引用再删除。 */
+  const pruneExecutions = async (): Promise<void> => {
+    try {
+      const result = await retentionModule.pruneOldExecutions();
+      if (result.deleted > 0) {
+        log(
+          `pruned ${result.deleted} execution(s) older than ${result.retentionDays}d`
+          + ` (masked ${result.masked}, batchCap: ${result.hitBatchCap})`,
+          { cutoff: result.cutoff.toISOString() },
+        );
+      }
+    } catch (error) {
+      logError("execution retention prune failed", error);
+    }
+  };
+
+  /**
+   * P4-13：漏投对账。RECONCILE_ENABLED 默认关（Safe by Default）；开启后按店拉时间窗内
+   * 商品变更，与已落执行/往轮补投比对，只把真正漏掉的重新入队（三层幂等，绝不重复执行）。
+   */
+  const reconcileConfig = reconcilePolicyModule.parseReconcileConfig(process.env);
+  const reconcileSweep = async (): Promise<void> => {
+    if (!reconcileConfig.enabled) return;
+    const shops = await installedShops(prisma);
+    const { since, until } = reconcilePolicyModule.reconcileWindow(
+      new Date(),
+      reconcileConfig.lookbackMinutes,
+    );
+    let requeuedTotal = 0;
+    for (const shop of shops) {
+      try {
+        const { admin } = await unauthenticated.admin(shop);
+        const result = await reconcileModule.reconcileShop({ admin, shopDomain: shop, since, until });
+        requeuedTotal += result.requeued;
+        if (result.requeued > 0) {
+          log(`reconcile re-queued ${result.requeued} event(s) for ${shop}`, {
+            scanned: result.scanned,
+            skipped: result.skipped,
+          });
+        }
+      } catch (error) {
+        logError(`reconcile failed for ${shop}`, error);
+      }
+    }
+    if (requeuedTotal > 0) log(`reconcile sweep re-queued ${requeuedTotal} event(s)`);
+  };
+
   for (const [label, pattern] of [
     ["snapshot", SNAPSHOT_CRON],
     ["sales", SALES_CRON],
+    ["automation", AUTOMATION_CRON],
+    ["delivery-prune", DELIVERY_PRUNE_CRON],
+    ["retention-prune", RETENTION_PRUNE_CRON],
+    ["reconcile", RECONCILE_CRON],
   ] as const) {
     if (!validate(pattern)) {
       console.error(`[worker] Invalid cron expression for ${label}: ${pattern}`);
@@ -166,7 +284,7 @@ async function main(): Promise<void> {
   }
 
   log(
-    `worker started (snapshot: ${SNAPSHOT_CRON}, sales: ${SALES_CRON}, pid: ${process.pid})`,
+    `worker started (snapshot: ${SNAPSHOT_CRON}, sales: ${SALES_CRON}, automation: ${AUTOMATION_CRON}, delivery-prune: ${DELIVERY_PRUNE_CRON}, retention-prune: ${RETENTION_PRUNE_CRON}, reconcile: ${RECONCILE_CRON} enabled=${reconcileConfig.enabled}, pid: ${process.pid})`,
   );
 
   // noOverlap 防止同一进程内上一次扫描还没跑完就被下一个调度点重入。
@@ -179,7 +297,29 @@ async function main(): Promise<void> {
       name: "sales-daily",
       noOverlap: true,
     }),
+    schedule(AUTOMATION_CRON, () => void sweepAutomations(), {
+      name: "automation-execute",
+      noOverlap: true,
+    }),
+    schedule(DELIVERY_PRUNE_CRON, () => void pruneDeliveries(), {
+      name: "webhook-delivery-prune",
+      noOverlap: true,
+    }),
+    schedule(RETENTION_PRUNE_CRON, () => void pruneExecutions(), {
+      name: "execution-retention-prune",
+      noOverlap: true,
+    }),
   );
+
+  // 对账仅在显式开启时排程：默认关时连 cron 句柄都不建，零开销、零副作用。
+  if (reconcileConfig.enabled) {
+    scheduledTasks.push(
+      schedule(RECONCILE_CRON, () => void reconcileSweep(), {
+        name: "webhook-reconcile",
+        noOverlap: true,
+      }),
+    );
+  }
 
   // 排程就绪后才接管停机信号：此时可以安全地 stop 排程并断池。
   process.on("SIGTERM", () => shutdown("SIGTERM"));
@@ -188,6 +328,8 @@ async function main(): Promise<void> {
   // 启动即补跑一次：worker 停机期间错过的整点不必等到下一个调度点。
   await sweepSnapshots();
   await sweepSales();
+  await sweepAutomations();
+  await pruneExecutions();
 }
 
 main().catch((error) => {

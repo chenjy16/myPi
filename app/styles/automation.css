@@ -1,0 +1,125 @@
+/*
+ * Automation 区（Phase 3）专属样式。全部视觉值取自 tokens.css，禁裸 hex（历史约束）。
+ * 仅补 Polaris `s-*` 原语未覆盖的少量呈现细节：侧栏分组标题、区内二级 Tab、模板卡片墙。
+ * 断点契约沿用 tokens.css：sm 560 · md 680 · lg 900 · xl 1180（验证视口 390/768/1280/1440）。
+ */
+
+/* 侧栏 Automation 分组标题：比导航项更弱的一行小标签，与 V1 项区隔但不喧宾。 */
+.appNavSectionLabel {
+  margin: var(--sp-4) var(--sp-3) var(--sp-1);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--app-slate);
+}
+
+/* 自动化区二级 Tab：横向、窄屏可换行不溢出。 */
+.autTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.autTab {
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-sm);
+  color: var(--app-muted);
+  text-decoration: none;
+}
+
+.autTab:hover {
+  background: var(--app-violet-faint);
+  color: var(--app-ink);
+}
+
+.autTab[aria-current="page"] {
+  background: var(--app-shell-nav-active-bg);
+  color: var(--app-purple-dark);
+  font-weight: var(--fw-semibold);
+}
+
+/* 模板卡片墙：auto-fit 网格在 390 塌成单列、1440 铺多列，min 280 防挤压破版。 */
+.autCardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--sp-4);
+}
+
+.autCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-4);
+  border: 1px solid var(--app-border);
+  border-radius: var(--radius-md);
+  background: var(--app-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.autCardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.autCardTitle {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--app-ink);
+}
+
+.autCardSummary {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--app-muted);
+  line-height: var(--lh-base);
+}
+
+.autStepList {
+  margin: 0;
+  padding-left: var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--app-slate);
+}
+
+/* 执行详情逐步骤时间线：左侧竖线串起里程碑，间距走 4px 栅格。 */
+.autTimeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.autTimelineRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border: 1px solid var(--app-border);
+  border-left: 4px solid var(--app-violet-line);
+  border-radius: var(--radius-sm);
+  background: var(--app-surface);
+}
+
+.autTimelineRow[data-awaiting="true"] {
+  border-left-color: var(--app-warning);
+  background: var(--app-warning-soft);
+}
+
+/* 指标卡值：KPI 字号走 tokens，供 Center 复用。 */
+.autMetricValue {
+  font-size: var(--fs-kpi);
+  font-weight: var(--fw-bold);
+  color: var(--app-ink);
+  line-height: var(--lh-tight);
+}
+
+@media (max-width: 560px) {
+  .autCardGrid {
+    grid-template-columns: 1fr;
+  }
+}

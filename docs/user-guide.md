@@ -238,15 +238,100 @@ Beyond manual sync, mypi keeps data current on its own:
 
 ## Data, privacy & permissions
 
-- **Read-only scopes**: products, inventory, orders, locations. Nothing is written back
-  to your store.
-- **What mypi stores**: inventory snapshots, sales counts, your settings, supplier
-  records, accepted decisions, purchase plans, decision audit history, and per-shop usage
-  events that power activation and advice-quality metrics during the beta. Feedback notes
-  are stored with your shop domain so the team can follow up.
-- **No customer data** is stored; customer data-request/redact webhooks only acknowledge.
-- **Tenant isolation**: everything is keyed by shop. **Uninstalling the app deletes every
-  record tied to your shop**, including the audit trail.
+### Scopes mypi asks for
+
+- **Currently granted (Beta main line):** `read_products`, `read_inventory`,
+  `read_orders`, `read_locations` — all read-only. Nothing is written back to
+  your store on the Beta path.
+- **Automations (Phase 4, gated):** an enabled automation may eventually need
+  a write scope for its action — for example `write_orders` to add a tag to an
+  order, or `write_products` to change a product's status. Until you reauthorize
+  with those scopes, mypi shows a **Store access needed** banner on the
+  Automations list, detail and wizard pages and does **not** run the affected
+  automations silently. We ask for each write scope only when the corresponding
+  Shopify protected-data approval has been granted for your store.
+
+### What mypi stores
+
+- **Replenishment data:** inventory snapshots, sales counts, your settings,
+  supplier records, accepted decisions, purchase plans, and per-decision audit
+  history.
+- **Automation definitions:** each automation and every version of it are
+  stored as a compiled plan (trigger, conditions, actions with their
+  parameters such as a tag name or an email template key). Editing an
+  automation creates a new version — the previous ones are kept so historical
+  runs can be replayed faithfully.
+- **Webhook deliveries:** the raw `topic`, `webhookId` and a normalised event
+  payload for each accepted Shopify webhook. The stored payload is
+  **field-whitelisted** at ingest: only the fields an automation actually
+  needs to make its decision survive (e.g. order `total_price`, `financial_status`,
+  product `id`). Customer email, phone, shipping address, payment details,
+  and names are dropped **before** the row is written.
+- **Execution history:** for every automation run we keep an execution log and
+  per-step record — status, timing, the target id the step acted on (order id,
+  customer id, or product gid), and a safe error summary. Values are stored
+  as identifiers, not as decoded personal data.
+- **Integration secrets:** any API keys / webhook signing secrets you attach
+  on the Integrations page are stored **encrypted at rest**; the UI only ever
+  shows a masked preview and the plaintext is decrypted only for the moment of
+  an outbound call.
+- **Product usage events:** per-shop, anonymous usage events that power
+  activation and advice-quality metrics during the beta; no customer data.
+
+### Retention
+
+- **Automation execution history** is kept for `EXECUTION_RETENTION_DAYS`
+  (default **180 days**). A daily pruning job removes rows older than that
+  window; rows still containing a customer identifier are **masked** rather
+  than dropped so the aggregate numbers stay meaningful.
+- **Webhook delivery receipts** are pruned after `WEBHOOK_DELIVERY_TTL_HOURS`
+  (default **24 hours**).
+- **Replenishment snapshots and sales history** are keyed to your shop and
+  rebuilt on every sync — no customer data ever enters those tables.
+
+### Deletion & GDPR
+
+- **Uninstalling the app deletes every row tied to your shop** — automations,
+  versions, executions, steps, deliveries, integrations (with their encrypted
+  secrets), plus all replenishment records and the audit trail. This runs
+  through the `app/uninstalled` webhook and is not reversible.
+- **`customers/data_request`** — when Shopify forwards a subject-access
+  request, mypi returns a JSON summary of every execution log / step row that
+  references the given `customerId` (target identifiers and status only;
+  no plaintext payloads).
+- **`customers/redact`** — mypi masks every stored field tied to the given
+  `customerId` (execution step targets, related log rows) so the row remains
+  valid for aggregate metrics but no longer points at the individual.
+- **`shop/redact`** — full business-data purge for the shop, executed by the
+  same code path as uninstall.
+
+### What mypi does **not** do
+
+- We never log secrets, decrypted integration credentials, or the raw
+  `Authorization` header. The logger has a key-name blacklist
+  (`secret`, `token`, `authorization`, `api_key`, `password`, `email`,
+  `phone`, `client_credentials`, `secretsEncrypted`) and rewrites their
+  values to `[redacted]` before the line leaves the process.
+- We never expose stack traces or upstream error bodies to the browser —
+  every error banner carries a safe, merchant-readable summary.
+- We never write to Shopify on the Beta main line. Any future write action
+  goes through a scope you explicitly reauthorized for.
+
+### Tenant isolation
+
+Everything is keyed by `shopId`. Read paths carry a hard `where: { shopId }`
+filter and every service-side write goes through an `assertShopScope` guard
+that rejects a row whose `shopId` doesn't match the calling session — a
+tampered automation id from another store returns not-found rather than
+crossing the boundary. This is exercised by a dedicated cross-tenant
+penetration suite (`tests/shop-isolation.db.test.ts`).
+
+### Privacy policy
+
+A hosted privacy policy URL is required before App Store submission; until
+then this guide is the authoritative disclosure. A placeholder link appears
+on the Integrations page — replace it with your published policy URL as part
+of the release checklist (see `docs/release-runbook.md`).
 
 ---
 

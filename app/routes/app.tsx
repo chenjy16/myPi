@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { Fragment } from "react";
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
 import {
   Link,
@@ -12,13 +13,25 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 
 import { authenticate } from "../shopify.server";
 import { ensureInstallTracked } from "../analytics.server";
+import { AUTOMATION_ENABLED } from "../features";
 import { readSafeErrorPayload, toSafeError } from "../lib/app-error";
 import { safeLoader } from "../lib/route-error";
 import "../styles/tokens.css";
 import "../styles/app-shell.css";
 import "../styles/dashboard.css";
+import "../styles/automation.css";
 
-const NAV_ITEMS = [
+type NavItem = {
+  to: string;
+  label: string;
+  glyph: string;
+  /** 精确匹配高亮（父级路由用，避免吞子路由）。 */
+  end?: boolean;
+  /** 分组标题；相邻同段项只显示一次小标题。 */
+  section?: string;
+};
+
+const V1_NAV: NavItem[] = [
   { to: "/app", label: "Home", glyph: "⌂", end: true },
   { to: "/app/inventory", label: "Replenishment", glyph: "↗" },
   { to: "/app/purchase-plans", label: "Purchase Plans", glyph: "▤" },
@@ -27,8 +40,27 @@ const NAV_ITEMS = [
   { to: "/app/data-health", label: "Data Health", glyph: "✓" },
   { to: "/app/metrics", label: "Beta Metrics", glyph: "◔" },
   { to: "/app/settings", label: "Settings", glyph: "⚙" },
-  // Guide & docs 从侧栏页脚提升为主导航末位：它是真实内容页，不该藏在角落。
+];
+
+// Phase 3 自动化区：灰度门控（AUTOMATION_ENABLED）关闭时整组从导航剔除，
+// V1 项零改动。Center 用 end:true，避免其前缀吞掉 Templates/Activity 等子路由高亮。
+const AUTOMATION_NAV: NavItem[] = [
+  { to: "/app/automation", label: "Automation Center", glyph: "✦", end: true, section: "Automation" },
+  { to: "/app/automation/templates", label: "Templates", glyph: "▦", section: "Automation" },
+  { to: "/app/automation/automations", label: "My Automations", glyph: "⚡", section: "Automation" },
+  { to: "/app/automation/activity", label: "Activity Logs", glyph: "≡", section: "Automation" },
+  { to: "/app/automation/integrations", label: "Integrations", glyph: "⇄", section: "Automation" },
+];
+
+const DOCS_NAV: NavItem[] = [
+  // Guide & docs 从侧栅页脚提升为主导航末位：它是真实内容页，不该藏在角落。
   { to: "/app/docs", label: "Guide & docs", glyph: "?" },
+];
+
+const NAV_ITEMS: NavItem[] = [
+  ...V1_NAV,
+  ...(AUTOMATION_ENABLED ? AUTOMATION_NAV : []),
+  ...DOCS_NAV,
 ];
 
 /** 嵌入式应用布局的鉴权：未登录会跳 OAuth；成功则把 apiKey 和店铺域名交给壳组件。 */
@@ -57,23 +89,31 @@ export default function App() {
             <span>mypi</span>
           </Link>
           <nav className="appNavigation" aria-label="App navigation">
-            {NAV_ITEMS.map((item) => {
+            {NAV_ITEMS.map((item, index) => {
               const isActive = item.end
                 ? location.pathname === item.to
                 : location.pathname === item.to ||
                   location.pathname.startsWith(`${item.to}/`);
+              const prev = NAV_ITEMS[index - 1];
+              const showSection = Boolean(item.section) && item.section !== prev?.section;
               return (
-                <Link
-                  key={item.to}
-                  className={`appNavLink${isActive ? " isActive" : ""}`}
-                  to={item.to}
-                  aria-current={isActive ? "page" : undefined}
-                >
-                  <span className="appNavGlyph" aria-hidden="true">
-                    {item.glyph}
-                  </span>
-                  {item.label}
-                </Link>
+                <Fragment key={item.to}>
+                  {showSection ? (
+                    <p className="appNavSectionLabel" aria-hidden="true">
+                      {item.section}
+                    </p>
+                  ) : null}
+                  <Link
+                    className={`appNavLink${isActive ? " isActive" : ""}`}
+                    to={item.to}
+                    aria-current={isActive ? "page" : undefined}
+                  >
+                    <span className="appNavGlyph" aria-hidden="true">
+                      {item.glyph}
+                    </span>
+                    {item.label}
+                  </Link>
+                </Fragment>
               );
             })}
           </nav>

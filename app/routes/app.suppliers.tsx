@@ -8,6 +8,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
 import { toSafeError } from "../lib/app-error";
+import { createLogger } from "../lib/logger";
 import { safeLoader } from "../lib/route-error";
 import {
   SUPPLIER_LIMITS,
@@ -123,6 +124,8 @@ async function recalcAdvice(shop: string): Promise<string> {
     : " No advice rows were affected.";
 }
 
+const logger = createLogger({ component: "route.suppliers" });
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
@@ -131,7 +134,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const fail = (error: unknown) => {
     const safe = toSafeError(error);
-    console.error("[mypi] supplier action failed", {
+    logger.error("supplier action failed", {
       intent,
       kind: safe.kind,
       detail: safe.detail,

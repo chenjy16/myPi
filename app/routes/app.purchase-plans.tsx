@@ -17,6 +17,7 @@ import db from "../db.server";
 import { authenticate } from "../shopify.server";
 import { trackEvent } from "../analytics.server";
 import { toSafeError } from "../lib/app-error";
+import { createLogger } from "../lib/logger";
 import { safeLoader } from "../lib/route-error";
 import { parsePlanQuantity, parsePurchaseDate } from "../lib/purchase-plans";
 import {
@@ -47,6 +48,8 @@ import {
 } from "../components/ui/status-badge";
 
 const PLAN_NOTES_MAX_LENGTH = 500;
+
+const logger = createLogger({ component: "route.purchase-plans" });
 
 /** 提交意图：与 action 里的分支一一对应，页面按它决定反馈落在哪一段。 */
 const INTENTS = [
@@ -221,7 +224,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return { error: "Unsupported operation." };
   } catch (error) {
     const safe = toSafeError(error);
-    console.error("[mypi] purchase plans action failed", {
+    logger.error("purchase plans action failed", {
       shop,
       intent: typeof intent === "string" ? intent : "unknown",
       kind: safe.kind,

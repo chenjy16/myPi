@@ -24,6 +24,25 @@ export const ANALYTICS_EVENT_TYPES = [
   "purchase_plan_ordered",
   "purchase_plan_exported",
   "feedback_submitted",
+  // 自动化（Phase 3）：关键商家动作埋点，与 UI 反馈同源。
+  "automation_created_from_template",
+  "automation_updated",
+  "automation_status_changed",
+  "automation_step_confirmed",
+  "automation_retried",
+  "integration_saved",
+  "integration_tested",
+  // 自动化引擎执行维度（Phase 4 · P4-20）：shop 级、无 PII 的运行态势，供 health/告警取数。
+  // 与商家动作埋点分开——这些是引擎收尾处旁路记录，口径见 docs/server-operations-guide.md 指标字典。
+  "execution_succeeded",
+  "execution_failed",
+  "execution_partial",
+  "execution_skipped",
+  "execution_awaiting_confirmation",
+  "execution_loop_blocked",
+  "execution_retried",
+  "webhook_dedup_hit",
+  "reconcile_requeued",
 ] as const;
 
 export type AnalyticsEventType = (typeof ANALYTICS_EVENT_TYPES)[number];

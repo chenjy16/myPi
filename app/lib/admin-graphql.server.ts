@@ -147,3 +147,86 @@ export async function adminGraphql<T>(
 
   return payload.data;
 }
+
+// —— P2-07 写通道：与读共用错误语义，但独立函数、绝不动上方读路径（风险隔离）。——
+
+export type AdminGraphqlWriteOptions = {
+  variables?: Record<string, unknown>;
+  /** 来源标识（automation:<id> / manual / sync）：尽力而为地写进 GraphQL query 注释，
+   * 供 P2-14 防循环排查回溯；**不假设 Shopify 会回传**（OQ-7）。 */
+  requestSource?: string;
+};
+
+export type UserError = { field?: string[]; message: string };
+
+function isUserError(value: unknown): value is UserError {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { message?: unknown }).message === "string"
+  );
+}
+
+/**
+ * 从 Mutation data 里抽取 userErrors：递归找任意路径下的 userErrors 数组
+（不同 Mutation 的返回形状不同：data.productUpdate.userErrors / data.userErrors 等）。
+ * 只认带 message 的对象条目，其他形状一律忽略（不误报）。
+ */
+export function collectUserErrors(data: unknown): UserError[] {
+  const found: UserError[] = [];
+  const walk = (node: unknown, depth: number): void => {
+    if (depth > 8 || typeof node !== "object" || node === null) return;
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        if (isUserError(item)) found.push(item);
+        else walk(item, depth + 1);
+      }
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    let handledUserErrors = false;
+    if (Array.isArray(record.userErrors)) {
+      handledUserErrors = true;
+      for (const item of record.userErrors) if (isUserError(item)) found.push(item);
+    }
+    // 已收过 userErrors 的节点不再下钻该分支：防同一条目被重复收集
+    for (const value of Object.values(record)) {
+      if (handledUserErrors && value === record.userErrors) continue;
+      walk(value, depth + 1);
+    }
+  };
+  walk(data, 0);
+  return found;
+}
+
+/**
+ * Mutation 的统一出口：透传给 adminGraphql（tries/退避/错误分类全部复用），
+ * 拿回 data 后把 userErrors 折成 validation 型 AppError——绝不吞掉：写操作的
+ * 业务失败（如 tag 超长、对象不存在）必须带可行动原文进 ExecutionStep。
+ */
+export async function adminGraphqlWrite<T>(
+  admin: AdminApiContext,
+  mutation: string,
+  options: AdminGraphqlWriteOptions = {},
+  wait: (ms: number) => Promise<void> = sleep,
+): Promise<T> {
+  const banner = options.requestSource
+    ? `# mypi-request-source: ${options.requestSource.replace(/[^\w.:-]/g, "_")}\n`
+    : "";
+  const data = await adminGraphql<T>(
+    admin,
+    `${banner}${mutation}`,
+    { variables: options.variables },
+    wait,
+  );
+  const userErrors = collectUserErrors(data);
+  if (userErrors.length) {
+    const detail = userErrors
+      .map((e) => (e.field?.length ? `[${e.field.join(",")}] ${e.message}` : e.message))
+      .join("; ")
+      .slice(0, 500);
+    throw new AppError("validation", userErrors[0].message, detail);
+  }
+  return data;
+}
+

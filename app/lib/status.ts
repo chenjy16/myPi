@@ -320,3 +320,42 @@ export function planStatusView(status: string): StatusView {
   }
   return statusView(status as PurchasePlanStatus);
 }
+
+/**
+ * 自动化执行/步骤态（P3）：ExecutionLog.status 与 ExecutionStep.status 共用一套
+ * tone + 商家语言文案（P3-19：不出现 Mutation/GID 术语）。DB 层是自由字符串，
+ * 认不出的历史值原样中性显示，绝不让徽章把看不懂的记录吞成空白（与 planStatusView 同则）。
+ */
+const AUTOMATION_TONE: Record<string, StatusTone> = {
+  SUCCESS: "success",
+  PARTIAL_SUCCESS: "warning",
+  FAILED: "critical",
+  SKIPPED: "neutral",
+  RETRYING: "info",
+  RUNNING: "info",
+  PENDING: "neutral",
+  AWAITING_CONFIRMATION: "warning",
+  UNKNOWN: "warning",
+};
+
+const AUTOMATION_LABEL: Record<string, string> = {
+  SUCCESS: "Succeeded",
+  PARTIAL_SUCCESS: "Partially done",
+  FAILED: "Failed",
+  SKIPPED: "Skipped",
+  RETRYING: "Retrying",
+  RUNNING: "Running",
+  PENDING: "Queued",
+  AWAITING_CONFIRMATION: "Needs your confirmation",
+  UNKNOWN: "Result unconfirmed",
+};
+
+/** 自动化态的展示视图（执行级与步骤级都走这里，保证全站同一说法）。 */
+export function automationStatusView(status: string): StatusView {
+  const tone = AUTOMATION_TONE[status] ?? "neutral";
+  return {
+    tone,
+    label: AUTOMATION_LABEL[status] ?? status,
+    className: TONE_CLASS[tone],
+  };
+}

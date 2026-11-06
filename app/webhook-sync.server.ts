@@ -1,5 +1,7 @@
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import db from "./db.server";
+import { toGid } from "./lib/shopify-id";
+import { purgeShopBusinessData as purgeCore } from "./lib/shop-purge";
 import { refreshLocationSnapshot, syncOrderDay } from "./inventory.server";
 import { hasRunningJob, lastSucceededAt } from "./sync-jobs.server";
 
@@ -17,16 +19,6 @@ const SNAPSHOT_COALESCE_MS =
 
 export type WebhookSyncStatus =
   "refreshed" | "coalesced" | "running" | "skipped";
-
-/** 把 payload 里的 id 归一成 GID：兼容 REST 数字 id 与 GraphQL 原生字符串 id 两种形状。 */
-function toGid(value: unknown, type: "Location" | "Order"): string | null {
-  if (typeof value === "number" && Number.isInteger(value)) {
-    return `gid://shopify/${type}/${value}`;
-  }
-  if (typeof value !== "string" || value.length === 0) return null;
-  if (value.startsWith("gid://")) return value;
-  return /^\d+$/.test(value) ? `gid://shopify/${type}/${value}` : null;
-}
 
 async function snapshotBusy(shop: string): Promise<WebhookSyncStatus> {
   if (await hasRunningJob(shop, "inventory-snapshot")) return "running";
@@ -90,74 +82,12 @@ export async function handleOrderWebhook(input: {
   return "refreshed";
 }
 
-type ShopScopedDelete = (shop: string) => Promise<{ count: number }>;
-
 /**
- * 合规删除（`app/uninstalled` 与 `shop/redact`）共用的清理口径。
- *
- * 这里列出「本店在应用里的全部业务数据」，只按 `shop` 过滤，不留任何表在外。
- * 新增业务模型时必须同步加进这张清单 —— 漏一张就等于把该删的数据留在库里，
- * `RecommendationAudit` 是阶段 2 才加的，之前两条 webhook 都还没覆盖到它。
+ * 合规删除（`app/uninstalled` 与 `shop/redact`）共用的清理口径：
+ * 删除清单与子先父后顺序在 lib/shop-purge（可注入客户端、脱库可测），这里是真库绑定。
  */
-const SHOP_SCOPED_DELETES: Array<[model: string, remove: ShopScopedDelete]> = [
-  ["session", (shop) => db.session.deleteMany({ where: { shop } })],
-  ["productDraft", (shop) => db.productDraft.deleteMany({ where: { shop } })],
-  [
-    "inventorySnapshot",
-    (shop) => db.inventorySnapshot.deleteMany({ where: { shop } }),
-  ],
-  [
-    "inventoryEvent",
-    (shop) => db.inventoryEvent.deleteMany({ where: { shop } }),
-  ],
-  ["location", (shop) => db.location.deleteMany({ where: { shop } })],
-  ["dataSyncJob", (shop) => db.dataSyncJob.deleteMany({ where: { shop } })],
-  ["salesDaily", (shop) => db.salesDaily.deleteMany({ where: { shop } })],
-  [
-    "reorderRecommendation",
-    (shop) => db.reorderRecommendation.deleteMany({ where: { shop } }),
-  ],
-  [
-    "recommendationAudit",
-    (shop) => db.recommendationAudit.deleteMany({ where: { shop } }),
-  ],
-  [
-    "inventorySettings",
-    (shop) => db.inventorySettings.deleteMany({ where: { shop } }),
-  ],
-  // 子表排在父表前面删，deleteMany 的计数才是各行自己的行数。
-  [
-    "variantSupplier",
-    (shop) => db.variantSupplier.deleteMany({ where: { shop } }),
-  ],
-  [
-    "supplier",
-    (shop) => db.supplier.deleteMany({ where: { shop } }),
-  ],
-  [
-    "purchasePlanLine",
-    (shop) => db.purchasePlanLine.deleteMany({ where: { shop } }),
-  ],
-  [
-    "purchasePlan",
-    (shop) => db.purchasePlan.deleteMany({ where: { shop } }),
-  ],
-  [
-    "adviceFeedback",
-    (shop) => db.adviceFeedback.deleteMany({ where: { shop } }),
-  ],
-  [
-    "analyticsEvent",
-    (shop) => db.analyticsEvent.deleteMany({ where: { shop } }),
-  ],
-];
 
 /** 返回每张表实际删掉的行数，便于在日志里留下「确实删干净了」的证据。 */
 export async function purgeShopBusinessData(shop: string): Promise<string[]> {
-  const removed: string[] = [];
-  for (const [model, remove] of SHOP_SCOPED_DELETES) {
-    const { count } = await remove(shop);
-    removed.push(`${model}:${count}`);
-  }
-  return removed;
+  return purgeCore(db, shop);
 }

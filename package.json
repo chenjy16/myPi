@@ -14,6 +14,7 @@
     "start": "react-router-serve ./build/server/index.js",
     "worker:build": "esbuild worker/index.ts --bundle --platform=node --format=esm --packages=external --outfile=build-worker/worker.mjs",
     "worker": "npm run worker:build && node build-worker/worker.mjs",
+    "backfill:shops": "esbuild scripts/backfill-shops.ts --bundle --platform=node --format=esm --packages=external --outfile=build-worker/backfill-shops.mjs && node build-worker/backfill-shops.mjs",
     "start:worker": "node build-worker/worker.mjs",
     "docker-start": "npm run setup && npm run start",
     "docker-worker": "prisma generate && npm run start:worker",

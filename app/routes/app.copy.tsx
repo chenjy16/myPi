@@ -11,6 +11,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { adminGraphql } from "../lib/admin-graphql.server";
 import { AppError, SHOPIFY_API_UNAVAILABLE_MESSAGE } from "../lib/app-error";
+import { createLogger } from "../lib/logger";
 import { safeLoader } from "../lib/route-error";
 import { generateProductCopy } from "../pi.server";
 import { ProductCopyError } from "../product-copy.server";
@@ -20,6 +21,8 @@ type Product = {
   title: string;
   descriptionHtml: string;
 };
+
+const logger = createLogger({ component: "route.copy" });
 
 const PRODUCT_QUERY = `#graphql
   query ProductCopyProducts {
@@ -363,7 +366,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     return { error: "Unsupported operation." };
   } catch (error) {
-    console.error("Product copy action failed", {
+    logger.error("Product copy action failed", {
       code: error instanceof ProductCopyError ? error.code : "operation",
       name: error instanceof Error ? error.name : "UnknownError",
     });

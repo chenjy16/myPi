@@ -52,22 +52,22 @@ model ProductDraft {
 }
 
 model InventorySettings {
-  shop                 String    @id
-  locationId           String?
-  locationName         String?
-  timezone             String    @default("UTC")
-  currencyCode         String    @default("USD")
-  leadTimeDays         Int       @default(14)
-  safetyStockDays      Int       @default(7)
-  reviewPeriodDays     Int       @default(14)
-  lastInventorySyncAt  DateTime?
-  lastSalesSyncAt      DateTime?
-  salesHistoryComplete Boolean   @default(false)
+  shop                         String    @id
+  locationId                   String?
+  locationName                 String?
+  timezone                     String    @default("UTC")
+  currencyCode                 String    @default("USD")
+  leadTimeDays                 Int       @default(14)
+  safetyStockDays              Int       @default(7)
+  reviewPeriodDays             Int       @default(14)
+  lastInventorySyncAt          DateTime?
+  lastSalesSyncAt              DateTime?
+  salesHistoryComplete         Boolean   @default(false)
   /// 当前授权下可见的历史起点（店铺时区 YYYY-MM-DD），用于算 Observed Demand 的样本天数。
-  salesWindowStart     String?
+  salesWindowStart             String?
   /// 商家在 Settings 保存补货参数的时间；null 表示仍是 schema 默认值（系统估计），供 UI 如实标注来源。
   replenishmentSettingsSavedAt DateTime?
-  updatedAt            DateTime  @updatedAt
+  updatedAt                    DateTime  @updatedAt
 }
 
 /// 店铺全部库存地点（多地点模型基础表），由同步任务写入。
@@ -229,7 +229,7 @@ model PurchasePlan {
 
 /// 采购计划行：来自建议的商家确认量；同计划同变体唯一，重复并入由服务层累加。
 model PurchasePlanLine {
-  id           String  @id @default(cuid())
+  id           String   @id @default(cuid())
   shop         String
   planId       String
   variantId    String
@@ -310,19 +310,196 @@ model AnalyticsEvent {
 
 /// 商家对单条建议的反馈（有用/没用 + 原因），与 variant 和最近一次审计关联。
 model AdviceFeedback {
-  id        String  @id @default(cuid())
-  shop      String
+  id         String   @id @default(cuid())
+  shop       String
   locationId String
-  variantId String
+  variantId  String
   /// useful | not_useful，由 reason 推导，不允许前端各写一套。
-  verdict   String
+  verdict    String
   /// too_high | too_low | not_needed_now | bad_data | other
-  reason    String?
-  comment   String?
+  reason     String?
+  comment    String?
   /// 关联的 RecommendationAudit.id；当时没有审计行则为 null。
-  auditId   String?
-  createdAt DateTime @default(now())
+  auditId    String?
+  createdAt  DateTime @default(now())
 
   @@index([shop, variantId, createdAt])
   @@index([shop, verdict, createdAt])
+}
+
+// ============================================================================
+// V2.0 Automation Toolkit —— 新增表（additive，与上方 V1 表并存；旧表零改动）。
+// 设计基准：docs/PRD-V2.0.md §26–§27、docs/V1-TO-V2-MIGRATION.md §3.2、docs/V2-PHASE1-TASKS.md P1-01。
+// 租户键走 shopId FK → Shop（因 Session.shop 不唯一）；状态用 String + 应用层常量，
+// 沿用 V1 风格避免 Prisma enum 的迁移摩擦。
+// ============================================================================
+
+/// V2 租户模型：Session.shop 无唯一约束，跨店隔离与级联删除以本表为准。
+model Shop {
+  id             String   @id @default(cuid())
+  /// myshopify 域名；一店一行，作为 V2 自动化子系统的租户锚点。
+  shop           String   @unique
+  timezone       String   @default("UTC")
+  currencyCode   String   @default("USD")
+  primaryCountry String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  automations  Automation[]
+  deliveries   WebhookDelivery[]
+  executions   ExecutionLog[]
+  integrations Integration[]
+  schedules    ScheduledJob[]
+}
+
+/// 一条自动化的当前态；定义存于 AutomationVersion，编辑生成新版本而非覆写。
+model Automation {
+  id               String   @id @default(cuid())
+  shopId           String
+  name             String
+  /// active | paused | deleted（软删），DB 层用 String。
+  status           String   @default("paused")
+  /// 指向当前生效版本 id；不加 FK 以免与 AutomationVersion.automationId 成环。
+  currentVersionId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  shop     Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  versions AutomationVersion[] @relation("AutomationVersions")
+  logs     ExecutionLog[]
+
+  @@index([shopId, status])
+}
+
+/// 自动化的不可变版本快照：definition 为编译冻结后的 DSL（trigger/conditions/actions）。
+model AutomationVersion {
+  id              String   @id @default(cuid())
+  automationId    String
+  version         Int
+  /// 冻结 DSL：引擎运行时只消费本字段，不再解释业务语义。
+  definition      Json
+  /// 若源自模板：记模板 id 与版本，便于升级/回溯。
+  templateId      String?
+  templateVersion String?
+  createdAt       DateTime @default(now())
+
+  automation Automation @relation("AutomationVersions", fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@unique([automationId, version])
+}
+
+/// Webhook 投递去重表：X-Shopify-Webhook-Id 唯一，撞索引即判定重复投递并丢弃。
+model WebhookDelivery {
+  id         String   @id @default(cuid())
+  shopId     String?
+  /// 冗余域名，便于 TTL 清理与 Shop 未回填时排查。
+  shop       String
+  /// X-Shopify-Webhook-Id：官方保证的投递唯一标识，用于幂等去重（VERIFIED）。
+  webhookId  String   @unique
+  topic      String
+  receivedAt DateTime @default(now())
+
+  shopRef Shop? @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([receivedAt])
+  @@index([shop, topic, receivedAt])
+}
+
+/// 一次自动化执行（父子里程碑）；重试新建子记录，原记录保留。
+model ExecutionLog {
+  id                String   @id @default(cuid())
+  shopId            String
+  automationId      String
+  /// 本次执行所用自动化版本号（快照，不随后续编辑变化）。
+  automationVersion Int
+  triggerType       String
+  /// 触发实体 GID，供按实体检索执行史。
+  entityRef         String?
+  /// 事件指纹去重键：同一次触发不重复落账；撞唯一索引即拒。
+  dedupeKey         String?  @unique
+  /// SUCCESS | FAILED | PARTIAL_SUCCESS | SKIPPED | RETRYING
+  status            String
+  /// 级联深度，配合 Loop Protection 的最大深度熔断。
+  cascadeDepth      Int      @default(0)
+  /// 逐条件求值结果（field/op/actual/pass），供 Activity Logs 展开。
+  conditionResult   Json?
+  /// 脱敏后的事件快照，便于复现判定（不含非必要 PII）。
+  payload           Json?
+  /// 重试父执行 id（自关联 ExecRetry）。
+  parentExecutionId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  shop       Shop            @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  automation Automation      @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  parent     ExecutionLog?   @relation("ExecRetry", fields: [parentExecutionId], references: [id], onDelete: SetNull)
+  children   ExecutionLog[]  @relation("ExecRetry")
+  steps      ExecutionStep[]
+
+  @@index([shopId, automationId, createdAt])
+  @@index([shopId, status, createdAt])
+  @@index([shopId, entityRef])
+}
+
+/// 执行中的单个动作步骤；每步独立结果，多步不构成分布式事务。
+model ExecutionStep {
+  id          String   @id @default(cuid())
+  executionId String
+  /// 步骤在定义中的顺序；(executionId, order) 唯一。
+  order       Int
+  actionId    String
+  /// SUCCESS | FAILED | SKIPPED | UNKNOWN | PENDING | AWAITING_CONFIRMATION
+  status      String
+  result      Json?
+  /// 商家可读错误文案；禁止透传 GraphQL 原始堆栈。
+  errorText   String?
+  createdAt   DateTime @default(now())
+
+  execution ExecutionLog @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@unique([executionId, order])
+}
+
+/// 外部集成连接（邮件服务商 / 出站 Webhook 端点）；密钥仅存密文。
+model Integration {
+  id               String    @id @default(cuid())
+  shopId           String
+  /// SHOPIFY | EMAIL | CUSTOM_WEBHOOK
+  kind             String
+  /// unverified | healthy | failing
+  status           String    @default("unverified")
+  /// 非敏感配置（收件人/URL/模板名）。
+  config           Json
+  /// 加密后的密钥；明文永不入库、不进日志。
+  secretsEncrypted String?
+  lastTestedAt     DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, kind])
+}
+
+/// 定时型自动化（如 daily 巡检）的调度记录；activeKey 复用 DataSyncJob 跨进程锁范式。
+model ScheduledJob {
+  id           String    @id @default(cuid())
+  shopId       String
+  automationId String
+  /// daily | cron
+  cadence      String
+  /// HH:mm，按 timezone 解释。
+  dailyTime    String?
+  timezone     String
+  lastRunAt    DateTime?
+  nextRunAt    DateTime?
+  /// running 期间占用，唯一约束即跨进程调度锁（完成/失败置空）。
+  activeKey    String?   @unique
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, nextRunAt])
 }

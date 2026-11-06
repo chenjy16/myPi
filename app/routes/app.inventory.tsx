@@ -20,6 +20,7 @@ import {
   type DashboardVariant,
 } from "../inventory.server";
 import { toSafeError } from "../lib/app-error";
+import { createLogger } from "../lib/logger";
 import { safeLoader } from "../lib/route-error";
 import { buildSyncFreshnessNotice } from "../lib/sync-freshness";
 import { SyncAlreadyRunningError, hasRunningJob } from "../sync-jobs.server";
@@ -83,6 +84,8 @@ import {
   TableSearchField,
   TableSortControl,
 } from "../components/ui/data-table";
+
+const logger = createLogger({ component: "route.inventory" });
 
 /** 数据异常时的拦截文案：页面上禁用按钮，服务端同样拒绝写入。 */
 const PAUSED_ERROR =
@@ -407,7 +410,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     const safe = toSafeError(error);
     // 原始细节（含 Prisma 错误码、Shopify 报错）只进服务端日志，不下发浏览器。
-    console.error("[mypi] inventory action failed", {
+    logger.error("inventory action failed", {
       shop: session.shop,
       intent: typeof intent === "string" ? intent : "unknown",
       kind: safe.kind,

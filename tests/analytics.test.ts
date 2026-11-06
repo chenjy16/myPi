@@ -27,8 +27,8 @@ function event(
 
 const DAY = 24 * 60 * 60 * 1000;
 
-test("事件清单恰好 17 类且无重复；清单外一律非法", () => {
-  assert.equal(ANALYTICS_EVENT_TYPES.length, 17);
+test("事件清单恰好 33 类且无重复；清单外一律非法", () => {
+  assert.equal(ANALYTICS_EVENT_TYPES.length, 33);
   assert.equal(
     new Set(ANALYTICS_EVENT_TYPES).size,
     ANALYTICS_EVENT_TYPES.length,
@@ -36,6 +36,22 @@ test("事件清单恰好 17 类且无重复；清单外一律非法", () => {
   );
   assert.equal(isAnalyticsEventType("sync_completed"), true);
   assert.equal(isAnalyticsEventType("page_loaded"), false);
+});
+
+test("P4-20 执行维度事件都在清单内且合法", () => {
+  for (const type of [
+    "execution_succeeded",
+    "execution_failed",
+    "execution_partial",
+    "execution_skipped",
+    "execution_awaiting_confirmation",
+    "execution_loop_blocked",
+    "execution_retried",
+    "webhook_dedup_hit",
+    "reconcile_requeued",
+  ] as const) {
+    assert.equal(isAnalyticsEventType(type), true, type);
+  }
 });
 
 test("P1-5 补齐的四个漏斗事件都在清单内且合法", () => {

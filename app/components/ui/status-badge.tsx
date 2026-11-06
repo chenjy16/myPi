@@ -9,6 +9,7 @@ import {
   readinessView,
   supplierActivityView,
   planStatusView,
+  automationStatusView,
   POLARIS_BADGE_TONE,
   type StatusView,
   type BusinessState,
@@ -94,4 +95,12 @@ export function SupplierActivityBadge({ kind }: { kind: SupplierActivity }) {
  */
 export function PlanStatusBadge({ status }: { status: string }) {
   return <ViewBadge view={planStatusView(status)} />;
+}
+
+/**
+ * 自动化执行/步骤态徽章（P3）：执行级与步骤级共用 automationStatusView，
+ * 保证 Activity Logs、执行详情、Center 角标说的是同一套话。
+ */
+export function AutomationStatusBadge({ status }: { status: string }) {
+  return <ViewBadge view={automationStatusView(status)} />;
 }
