@@ -32,20 +32,27 @@ export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
   const days = Number(url.searchParams.get("days") ?? "") || undefined;
   const from = days && days > 0 ? new Date(Date.now() - days * DAY) : undefined;
 
-  const [page, automations] = await Promise.all([
+  const [page, automations, totalCount] = await Promise.all([
     activityService.listRows(shop.id, { status, automationId, cursor, from, limit: 25 }),
     automationsService.list(shop.id),
+    activityService.count(shop.id),
   ]);
+
+  // Distinguish "no data at all" from "filters yield nothing"
+  const hasActiveFilters = Boolean(status || automationId || days);
 
   return {
     timezone: shop.timezone,
     status,
     automationId,
     days: days ?? "",
+    hasActiveFilters,
+    totalCount,
     nextCursor: page.nextCursor,
     automationOptions: automations.map((a) => ({ id: a.id, name: a.name })),
     rows: page.items.map((r) => ({
       id: r.id,
+      automationName: automations.find((a) => a.id === r.automationId)?.name ?? r.automationId,
       status: r.status,
       trigger: triggerSummary(r.triggerType),
       summary: r.summary,
@@ -61,10 +68,16 @@ export default function ActivityLogs() {
 
   return (
     <s-page heading="Activity Logs">
-      <s-section heading="Filters">
+      <s-section>
+        <s-paragraph>
+          Track every automation execution and troubleshoot issues.
+        </s-paragraph>
+      </s-section>
+
+      <s-section>
         <Form method="get">
           <s-stack direction="block" gap="small">
-            <s-grid gridTemplateColumns="1fr 1fr 1fr" gap="small">
+            <s-grid gridTemplateColumns="1fr 1fr 1fr 1fr" gap="small">
               <s-select label="Status" name="status" value={data.status ?? ""}>
                 {STATUS_OPTIONS.map((o) => (
                   <s-option key={o.value} value={o.value} selected={(data.status ?? "") === o.value}>
@@ -82,7 +95,7 @@ export default function ActivityLogs() {
                   </s-option>
                 ))}
               </s-select>
-              <s-select label="Time window" name="days" value={String(data.days ?? "")}>
+              <s-select label="Time range" name="days" value={String(data.days ?? "")}>
                 <s-option value="" selected={!data.days}>
                   Any time
                 </s-option>
@@ -96,40 +109,72 @@ export default function ActivityLogs() {
                   Last 30 days
                 </s-option>
               </s-select>
+              <s-stack direction="inline" gap="small">
+                <s-button type="submit" variant="secondary">
+                  Apply
+                </s-button>
+                {data.hasActiveFilters && (
+                  <s-link href="/app/automation/activity">Clear</s-link>
+                )}
+              </s-stack>
             </s-grid>
-            <s-button type="submit" variant="secondary">
-              Apply filters
-            </s-button>
           </s-stack>
         </Form>
       </s-section>
 
       <s-section heading={`Runs (${data.rows.length})`}>
         {data.rows.length === 0 ? (
-          <EmptyState
-            heading="No activity yet"
-            body="Runs will appear here once one of your automations has fired. Adjust the filters to widen the search."
-            action={<Link to="/app/automation/templates">Browse templates →</Link>}
-          />
+          data.totalCount === 0 ? (
+            // Case A: No execution records exist at all
+            <EmptyState
+              heading="No activity yet"
+              body="Your automation runs will appear here once an automation is triggered."
+              action={
+                <s-link href="/app/automation/templates">Browse Templates →</s-link>
+              }
+            />
+          ) : (
+            // Case B: No results match the current filters
+            <EmptyState
+              heading="No matching activity"
+              body="Try adjusting your filters or selecting a wider time range."
+              action={
+                <s-link href="/app/automation/activity">Clear Filters →</s-link>
+              }
+            />
+          )
         ) : (
-          <div className="autTimeline">
-            {data.rows.map((row) => (
-              <div className="autTimelineRow" key={row.id}>
-                <s-stack direction="block" gap="small">
-                  <s-stack direction="inline" gap="small">
+          <s-table variant="auto">
+            <s-table-header-row>
+              <s-table-header listSlot="primary">Automation</s-table-header>
+              <s-table-header listSlot="labeled">Trigger</s-table-header>
+              <s-table-header listSlot="labeled">Status</s-table-header>
+              <s-table-header listSlot="labeled">Started At</s-table-header>
+              <s-table-header listSlot="labeled">Summary</s-table-header>
+              <s-table-header listSlot="inline">Actions</s-table-header>
+            </s-table-header-row>
+            <s-table-body>
+              {data.rows.map((row) => (
+                <s-table-row key={row.id}>
+                  <s-table-cell>
+                    <s-stack direction="inline" gap="small">
+                      <span>{row.automationName}</span>
+                      {row.retried ? <s-badge tone="info">retry</s-badge> : null}
+                    </s-stack>
+                  </s-table-cell>
+                  <s-table-cell>{row.trigger}</s-table-cell>
+                  <s-table-cell>
                     <AutomationStatusBadge status={row.status} />
-                    <s-paragraph>{row.trigger}</s-paragraph>
-                    {row.retried ? <s-badge tone="info">retry</s-badge> : null}
-                  </s-stack>
-                  <s-paragraph>{row.summary}</s-paragraph>
-                  <s-stack direction="inline" gap="small">
-                    <s-text>{row.when}</s-text>
+                  </s-table-cell>
+                  <s-table-cell>{row.when}</s-table-cell>
+                  <s-table-cell>{row.summary}</s-table-cell>
+                  <s-table-cell>
                     <Link to={`/app/automation/activity/${row.id}`}>View details →</Link>
-                  </s-stack>
-                </s-stack>
-              </div>
-            ))}
-          </div>
+                  </s-table-cell>
+                </s-table-row>
+              ))}
+            </s-table-body>
+          </s-table>
         )}
 
         {data.nextCursor ? (

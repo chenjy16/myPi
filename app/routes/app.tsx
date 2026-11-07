@@ -31,8 +31,22 @@ type NavItem = {
   section?: string;
 };
 
+// V2.0 Final Alignment：Sidebar 仅保留 7 项核心导航 + Guide & Docs。
+// PRD 决策 2：V1 库存功能完全隐藏，不保留 Inventory Tools 菜单。
+// PRD 决策 4：全局只保留一套 Sidebar，删除重复的顶部 Automation 导航。
+const AUTOMATION_NAV: NavItem[] = [
+  { to: "/app", label: "Dashboard", glyph: "⌂", end: true, section: "MAIN" },
+  { to: "/app/automation", label: "Automation Center", glyph: "✦", end: true, section: "MAIN" },
+  { to: "/app/automation/automations", label: "My Automations", glyph: "⚡", section: "MAIN" },
+  { to: "/app/automation/templates", label: "Templates", glyph: "▦", section: "MAIN" },
+  { to: "/app/automation/activity", label: "Activity Logs", glyph: "≡", section: "MAIN" },
+  { to: "/app/automation/integrations", label: "Integrations", glyph: "⇄", section: "CONFIGURATION" },
+  { to: "/app/settings", label: "Settings", glyph: "⚙", section: "CONFIGURATION" },
+];
+
+// flag 关闭时的兜底导航：保留 V1 完整信息架构，Home 直连 /app/overview 避免 loader redirect。
 const V1_NAV: NavItem[] = [
-  { to: "/app", label: "Home", glyph: "⌂", end: true },
+  { to: "/app/overview", label: "Home", glyph: "⌂", end: true },
   { to: "/app/inventory", label: "Replenishment", glyph: "↗" },
   { to: "/app/purchase-plans", label: "Purchase Plans", glyph: "▤" },
   { to: "/app/suppliers", label: "Suppliers", glyph: "☐" },
@@ -42,24 +56,12 @@ const V1_NAV: NavItem[] = [
   { to: "/app/settings", label: "Settings", glyph: "⚙" },
 ];
 
-// Phase 3 自动化区：灰度门控（AUTOMATION_ENABLED）关闭时整组从导航剔除，
-// V1 项零改动。Center 用 end:true，避免其前缀吞掉 Templates/Activity 等子路由高亮。
-const AUTOMATION_NAV: NavItem[] = [
-  { to: "/app/automation", label: "Automation Center", glyph: "✦", end: true, section: "Automation" },
-  { to: "/app/automation/templates", label: "Templates", glyph: "▦", section: "Automation" },
-  { to: "/app/automation/automations", label: "My Automations", glyph: "⚡", section: "Automation" },
-  { to: "/app/automation/activity", label: "Activity Logs", glyph: "≡", section: "Automation" },
-  { to: "/app/automation/integrations", label: "Integrations", glyph: "⇄", section: "Automation" },
-];
-
 const DOCS_NAV: NavItem[] = [
-  // Guide & docs 从侧栅页脚提升为主导航末位：它是真实内容页，不该藏在角落。
-  { to: "/app/docs", label: "Guide & docs", glyph: "?" },
+  { to: "/app/docs", label: "Guide & Docs", glyph: "?", section: "HELP" },
 ];
 
 const NAV_ITEMS: NavItem[] = [
-  ...V1_NAV,
-  ...(AUTOMATION_ENABLED ? AUTOMATION_NAV : []),
+  ...(AUTOMATION_ENABLED ? AUTOMATION_NAV : V1_NAV),
   ...DOCS_NAV,
 ];
 

@@ -1,8 +1,9 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { useLoaderData } from "react-router";
+import { redirect, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
+import { AUTOMATION_ENABLED } from "../features";
 import { getShopBetaMetrics, trackDailyVisit } from "../analytics.server";
 import { safeLoader } from "../lib/route-error";
 import { formatRate, humanizeDurationMs } from "../lib/analytics";
@@ -13,6 +14,7 @@ import { formatDate } from "../lib/format";
  * 数据全部来自 lib/analytics 的纯函数，口径与采集同源；缺的事件一律显示 “—”，不编造数字。
  */
 export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
+  if (AUTOMATION_ENABLED) throw redirect("/app");
   const { session } = await authenticate.admin(request);
   // 访问本页本身也刷新「日活心跳」，与 dashboard_viewed 的每店每天一条口径一致。
   void trackDailyVisit(session.shop);

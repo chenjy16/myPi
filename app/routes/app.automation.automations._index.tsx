@@ -102,6 +102,15 @@ export default function MyAutomations() {
 
   return (
     <s-page heading="My Automations">
+      {/* R2-A: 与 Dashboard/Automation Center 风格统一，提供快捷创建入口。 */}
+      <s-stack direction="inline" gap="small">
+        <s-button href="/app/automation/templates" variant="primary">
+          Create Automation
+        </s-button>
+        <s-button href="/app/automation" variant="secondary">
+          Explore Capabilities
+        </s-button>
+      </s-stack>
       {scopeGap.ok ? null : (
         <s-section>
           <ScopeGapBanner gap={scopeGap} shopDomain={shopDomain} />

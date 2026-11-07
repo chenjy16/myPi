@@ -96,6 +96,8 @@ export default function TemplatesGallery() {
             Pick a pre-built automation, set a couple of values, and enable it.
             Ready templates can be turned on in about three minutes.
           </s-paragraph>
+          {/* R2-C: 强化 V2 IA 面包屑，与 Automation Center 能力发现形成闭环。 */}
+          <s-link href="/app/automation">← Back to Automation Center</s-link>
         </s-stack>
       </s-section>
 

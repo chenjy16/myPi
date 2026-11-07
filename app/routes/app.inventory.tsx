@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  redirect,
   useFetcher,
   useLoaderData,
   useNavigation,
@@ -9,6 +10,7 @@ import {
 } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
+import { AUTOMATION_ENABLED } from "../features";
 import {
   buildReorderExport,
   fetchInventoryLocations,
@@ -122,6 +124,7 @@ function hasAllOrdersScope(scope: string | undefined): boolean {
 
 /** 打开库存页：鉴权后拉地点列表、看板计算结果、最近的决策审计与行级反馈。 */
 export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
+  if (AUTOMATION_ENABLED) throw redirect("/app");
   const { admin, session } = await authenticate.admin(request);
   const canReadAllOrders = hasAllOrdersScope(session.scope);
   const locations = await fetchInventoryLocations(admin);

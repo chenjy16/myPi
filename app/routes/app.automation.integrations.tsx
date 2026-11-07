@@ -121,6 +121,13 @@ export default function Integrations() {
             outbound webhook wiring go live with provider access in a later phase — testing now
             reports what is actually reachable, it will not pretend to be healthy.
           </s-paragraph>
+          {/* R2-E: 状态说明诚实边界——不假装未实现的连接。 */}
+          <s-paragraph>
+            Status reflects the last real test result. “Unknown” means the
+            integration was saved but never tested. Click “Test” to perform an
+            actual connectivity check; the status only updates to “healthy” when
+            the test succeeds.
+          </s-paragraph>
           {/* P4-12：隐私披露入口——上架前把 href 替成已发布的 Privacy Policy URL（见 docs/release-runbook.md）。 */}
           <s-paragraph>
             What we collect, why, and how long we keep it is documented in the

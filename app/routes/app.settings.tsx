@@ -9,6 +9,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
 import { trackEvent } from "../analytics.server";
+import { AUTOMATION_ENABLED } from "../features";
 import { toSafeError } from "../lib/app-error";
 import { createLogger } from "../lib/logger";
 import { safeLoader } from "../lib/route-error";
@@ -25,6 +26,7 @@ import {
   getModelConfigurationStatus,
   ProductCopyError,
 } from "../product-copy.server";
+import { integrationsService } from "../integrations.server";
 import { FactGrid } from "../components/ui/fact-grid";
 import { LoadingState } from "../components/ui/loading-state";
 import { ReadinessBadge } from "../components/ui/status-badge";
@@ -49,9 +51,24 @@ export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
     where: { shop: session.shop },
   });
 
+  // R2-B: Automation 段需要读取真实的 integration 配置状态。
+  const shopId = session.shop; // 以 domain 为 key
+  const integrations = await integrationsService.list(shopId);
+  const emailIntegration = integrations.find((i) => i.kind === "EMAIL") ?? null;
+  const webhookCount = integrations.filter((i) => i.kind === "CUSTOM_WEBHOOK").length;
+
   return {
     model: getModelConfigurationStatus(),
     canTestModel: resolveCanTestModel(session),
+    automation: {
+      totalIntegrations: integrations.length,
+      emailConfigured: emailIntegration !== null,
+      emailStatus: emailIntegration?.status ?? "none",
+      webhookCount,
+      lastEmailTest: emailIntegration?.lastTestedAt
+        ? formatDateTime(emailIntegration.lastTestedAt, settingsRow?.timezone ?? "UTC")
+        : null,
+    },
     general: {
       shop: session.shop,
       locationName: settingsRow?.locationName ?? null,
@@ -163,9 +180,9 @@ const REPLENISHMENT_FIELDS: ReplenishmentFieldName[] = [
   "reviewPeriodDays",
 ];
 
-/** Settings 页：General / Inventory Settings / Supplier Settings / AI Configuration / Data Synchronization 五段。 */
+/** Settings 页：V2.0 显示 Automation + General + AI；V1 flag 关时显示全部。 */
 export default function SettingsPage() {
-  const { model, canTestModel, general, replenishment, sync } =
+  const { model, canTestModel, automation, general, replenishment, sync } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const isBusy = fetcher.state !== "idle";
@@ -194,12 +211,45 @@ export default function SettingsPage() {
 
   return (
     <s-page heading="Settings">
-      <s-section heading="General">
+      {/* V2.0 自动化配置概览 */}
+      <s-section heading="Automation">
         <s-stack direction="block" gap="base">
           <s-paragraph>
-            Replenishment parameters, supplier data, model service and
-            synchronization for this store.
+            Automations use integrations (email, webhooks) to perform actions.
+            Configure them from the Integrations page, then link them in your
+            automation definitions.
           </s-paragraph>
+          <FactGrid
+            facts={[
+              {
+                label: "Email integration",
+                value: automation.emailConfigured
+                  ? `Configured (${automation.emailStatus})`
+                  : "Not set up",
+              },
+              {
+                label: "Webhook integrations",
+                value: String(automation.webhookCount),
+              },
+              {
+                label: "Last email test",
+                value: automation.lastEmailTest ?? "Never tested",
+              },
+            ]}
+          />
+          {!automation.emailConfigured && (
+            <s-banner tone="warning" heading="No email integration">
+              Automations that send notifications need an email integration.
+            </s-banner>
+          )}
+          <s-link href="/app/automation/integrations">
+            Manage Integrations →
+          </s-link>
+        </s-stack>
+      </s-section>
+
+      <s-section heading="General">
+        <s-stack direction="block" gap="base">
           <FactGrid
             facts={[
               { label: "Store domain", value: general.shop },
@@ -213,90 +263,6 @@ export default function SettingsPage() {
               },
             ]}
           />
-          <s-paragraph>
-            Timezone and currency follow the Shopify store settings; the order
-            date boundary used by advice is shown on Data health.
-          </s-paragraph>
-        </s-stack>
-      </s-section>
-
-      <s-section heading="Inventory settings">
-        <s-stack direction="block" gap="base">
-          <s-paragraph>
-            <ReadinessBadge
-              kind={parametersAreCustom ? "storeSettings" : "systemEstimate"}
-            />
-          </s-paragraph>
-          <s-paragraph>
-            These parameters drive reorder advice. Saving changed values
-            recalculates the calculation basis of advice rows on the current
-            snapshot; quantities and statuses you already decided on are never
-            overwritten.
-          </s-paragraph>
-          {saveSectionBusy && <LoadingState label="Saving settings…" />}
-          <fetcher.Form method="post">
-            <input type="hidden" name="intent" value="save-replenishment" />
-            <s-stack direction="block" gap="base">
-              <s-grid
-                gridTemplateColumns="repeat(auto-fit, minmax(220px, 1fr))"
-                gap="base"
-              >
-                {REPLENISHMENT_FIELDS.map((field) => (
-                  <s-number-field
-                    key={field}
-                    name={field}
-                    label={`${FIELD_LABELS[field]} (days)`}
-                    details={FIELD_HINTS[field]}
-                    error={fieldErrors?.[field]}
-                    min={REPLENISHMENT_LIMITS[field].min}
-                    max={REPLENISHMENT_LIMITS[field].max}
-                    step={1}
-                    required
-                    disabled={saveSectionBusy}
-                    defaultValue={String(replenishment[field])}
-                  />
-                ))}
-              </s-grid>
-              <s-button
-                type="submit"
-                variant="primary"
-                disabled={saveSectionBusy}
-                {...(saveSectionBusy ? { loading: true } : {})}
-              >
-                Save settings
-              </s-button>
-            </s-stack>
-          </fetcher.Form>
-          {saved && (
-            <s-banner tone="success" heading="Settings saved">
-              {recalculation?.changed
-                ? `Reorder advice recalculated (${
-                    recalculation.registered + recalculation.refreshed
-                  } advice rows refreshed).`
-                : "Values matched what was already stored, so nothing was recalculated."}
-            </s-banner>
-          )}
-          {saveErrored && error && (
-            <s-banner tone="critical" heading="Operation not completed">
-              {error}
-            </s-banner>
-          )}
-        </s-stack>
-      </s-section>
-
-      <s-section heading="Supplier settings">
-        <s-stack direction="block" gap="base">
-          <s-paragraph>
-            <ReadinessBadge kind="available" />
-          </s-paragraph>
-          <s-paragraph>
-            Supplier profiles, per-SKU MOQ, case pack, unit cost and supplier
-            lead times are managed on the{" "}
-            <s-link href="/app/suppliers">Suppliers</s-link> page. Bound supply
-            terms override the store-wide defaults above for those variants, and
-            reorder quantities round up to full packs and minimum order
-            quantities.
-          </s-paragraph>
         </s-stack>
       </s-section>
 
@@ -366,44 +332,129 @@ export default function SettingsPage() {
         </s-stack>
       </s-section>
 
-      <s-section heading="Data synchronization">
-        <s-stack direction="block" gap="base">
-          <s-paragraph>
-            Inventory and sales data refresh on a background schedule, on
-            Shopify webhooks, and when you run Sync on the Replenishment page.
-            Raw payloads are only invalidation signals — numbers are always
-            re-read from the Shopify Admin API.
-          </s-paragraph>
-          <FactGrid
-            facts={[
-              {
-                label: "Last inventory sync",
-                value: formatDateTime(sync.lastInventorySyncAt, timeZone),
-              },
-              {
-                label: "Last sales sync",
-                value: formatDateTime(sync.lastSalesSyncAt, timeZone),
-              },
-              {
-                label: "Sales history coverage",
-                value:
-                  sync.salesHistoryComplete && sync.salesWindowStart
-                    ? `Full history from ${formatDate(sync.salesWindowStart, timeZone)}`
-                    : sync.salesWindowStart
-                      ? `Recent window from ${formatDate(
-                          sync.salesWindowStart,
-                          timeZone,
-                        )} (60-day limit under current approval)`
-                      : "Not synced yet",
-              },
-            ]}
-          />
-          <s-paragraph>
-            Check per-check diagnosis and the ledger of every sync run on{" "}
-            <s-link href="/app/data-health">Data health</s-link>.
-          </s-paragraph>
-        </s-stack>
-      </s-section>
+      {/* V1 Inventory sections: only visible when AUTOMATION_ENABLED is off (legacy mode) */}
+      {!AUTOMATION_ENABLED && (
+        <>
+          <s-section heading="Inventory settings">
+            <s-stack direction="block" gap="base">
+              <s-paragraph>
+                <ReadinessBadge
+                  kind={parametersAreCustom ? "storeSettings" : "systemEstimate"}
+                />
+              </s-paragraph>
+              <s-paragraph>
+                These parameters drive reorder advice. Saving changed values
+                recalculates the calculation basis of advice rows on the current
+                snapshot; quantities and statuses you already decided on are never
+                overwritten.
+              </s-paragraph>
+              {saveSectionBusy && <LoadingState label="Saving settings…" />}
+              <fetcher.Form method="post">
+                <input type="hidden" name="intent" value="save-replenishment" />
+                <s-stack direction="block" gap="base">
+                  <s-grid
+                    gridTemplateColumns="repeat(auto-fit, minmax(220px, 1fr))"
+                    gap="base"
+                  >
+                    {REPLENISHMENT_FIELDS.map((field) => (
+                      <s-number-field
+                        key={field}
+                        name={field}
+                        label={`${FIELD_LABELS[field]} (days)`}
+                        details={FIELD_HINTS[field]}
+                        error={fieldErrors?.[field]}
+                        min={REPLENISHMENT_LIMITS[field].min}
+                        max={REPLENISHMENT_LIMITS[field].max}
+                        step={1}
+                        required
+                        disabled={saveSectionBusy}
+                        defaultValue={String(replenishment[field])}
+                      />
+                    ))}
+                  </s-grid>
+                  <s-button
+                    type="submit"
+                    variant="primary"
+                    disabled={saveSectionBusy}
+                    {...(saveSectionBusy ? { loading: true } : {})}
+                  >
+                    Save settings
+                  </s-button>
+                </s-stack>
+              </fetcher.Form>
+              {saved && (
+                <s-banner tone="success" heading="Settings saved">
+                  {recalculation?.changed
+                    ? `Reorder advice recalculated (${
+                        recalculation.registered + recalculation.refreshed
+                      } advice rows refreshed).`
+                    : "Values matched what was already stored, so nothing was recalculated."}
+                </s-banner>
+              )}
+              {saveErrored && error && (
+                <s-banner tone="critical" heading="Operation not completed">
+                  {error}
+                </s-banner>
+              )}
+            </s-stack>
+          </s-section>
+
+          <s-section heading="Supplier settings">
+            <s-stack direction="block" gap="base">
+              <s-paragraph>
+                <ReadinessBadge kind="available" />
+              </s-paragraph>
+              <s-paragraph>
+                Supplier profiles, per-SKU MOQ, case pack, unit cost and supplier
+                lead times are managed on the{" "}
+                <s-link href="/app/suppliers">Suppliers</s-link> page. Bound supply
+                terms override the store-wide defaults above for those variants, and
+                reorder quantities round up to full packs and minimum order
+                quantities.
+              </s-paragraph>
+            </s-stack>
+          </s-section>
+
+          <s-section heading="Data synchronization">
+            <s-stack direction="block" gap="base">
+              <s-paragraph>
+                Inventory and sales data refresh on a background schedule, on
+                Shopify webhooks, and when you run Sync on the Replenishment page.
+                Raw payloads are only invalidation signals — numbers are always
+                re-read from the Shopify Admin API.
+              </s-paragraph>
+              <FactGrid
+                facts={[
+                  {
+                    label: "Last inventory sync",
+                    value: formatDateTime(sync.lastInventorySyncAt, timeZone),
+                  },
+                  {
+                    label: "Last sales sync",
+                    value: formatDateTime(sync.lastSalesSyncAt, timeZone),
+                  },
+                  {
+                    label: "Sales history coverage",
+                    value:
+                      sync.salesHistoryComplete && sync.salesWindowStart
+                        ? `Full history from ${formatDate(sync.salesWindowStart, timeZone)}`
+                        : sync.salesWindowStart
+                          ? `Recent window from ${formatDate(
+                              sync.salesWindowStart,
+                              timeZone,
+                            )} (60-day limit under current approval)`
+                          : "Not synced yet",
+                  },
+                ]}
+              />
+              <s-paragraph>
+                Check per-check diagnosis and the ledger of every sync run on{" "}
+                <s-link href="/app/data-health">Data health</s-link>.
+              </s-paragraph>
+            </s-stack>
+          </s-section>
+        </>
+      )}
     </s-page>
   );
 }

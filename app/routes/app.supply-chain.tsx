@@ -1,10 +1,13 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
+import { redirect } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
+import { AUTOMATION_ENABLED } from "../features";
 import { safeLoader } from "../lib/route-error";
 import { ReadinessBadge } from "../components/ui/status-badge";
 
 export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
+  if (AUTOMATION_ENABLED) throw redirect("/app");
   await authenticate.admin(request);
   return null;
 });

@@ -5,6 +5,7 @@
  */
 import { useEffect, useRef } from "react";
 import {
+  redirect,
   useFetcher,
   useLoaderData,
   useNavigation,
@@ -15,6 +16,7 @@ import {
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
+import { AUTOMATION_ENABLED } from "../features";
 import { trackEvent } from "../analytics.server";
 import { toSafeError } from "../lib/app-error";
 import { createLogger } from "../lib/logger";
@@ -87,6 +89,7 @@ const intentIsKnown = (intent: unknown): boolean =>
 const MIN_PLAN_QUANTITY = 1;
 
 export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
+  if (AUTOMATION_ENABLED) throw redirect("/app");
   const { session } = await authenticate.admin(request);
   const [pool, plans, storeMeta] = await Promise.all([
     getAdvicePool(session.shop),

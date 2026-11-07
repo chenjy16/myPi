@@ -1,7 +1,8 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { useLoaderData, useNavigation } from "react-router";
+import { redirect, useLoaderData, useNavigation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
+import { AUTOMATION_ENABLED } from "../features";
 import { getInventoryDashboard } from "../inventory.server";
 import { recentJobs } from "../sync-jobs.server";
 import { safeLoader } from "../lib/route-error";
@@ -23,6 +24,7 @@ import {
 
 /** 数据健康页：检查清单、恢复条件与同步台账，全部来自当前库内事实。 */
 export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
+  if (AUTOMATION_ENABLED) throw redirect("/app");
   const { session } = await authenticate.admin(request);
   const canReadAllOrders =
     session.scope

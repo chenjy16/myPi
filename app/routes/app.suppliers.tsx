@@ -3,10 +3,11 @@ import type {
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
-import { useFetcher, useLoaderData } from "react-router";
+import { redirect, useFetcher, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
+import { AUTOMATION_ENABLED } from "../features";
 import { toSafeError } from "../lib/app-error";
 import { createLogger } from "../lib/logger";
 import { safeLoader } from "../lib/route-error";
@@ -49,6 +50,7 @@ function variantLabel(candidate: VariantCandidate): string {
 }
 
 export const loader = safeLoader(async ({ request }: LoaderFunctionArgs) => {
+  if (AUTOMATION_ENABLED) throw redirect("/app");
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
 

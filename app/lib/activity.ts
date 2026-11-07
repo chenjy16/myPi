@@ -5,6 +5,7 @@
 import type { ExecutionLog, PrismaClient } from "@prisma/client";
 import type { EvaluationResult } from "./condition-evaluator.ts";
 import type { CompiledPlan } from "./automation-compiler.ts";
+import type { ExecutionStatusCounts } from "./health-automation.ts";
 
 export type ActivityClient = Pick<PrismaClient, "executionLog" | "executionStep">;
 
@@ -177,6 +178,40 @@ export async function awaitingConfirmationCount(
     select: { executionId: true },
   });
   return new Set(rows.map((r) => r.executionId)).size;
+}
+
+/**
+ * 累计执行次数（V2.0 Dashboard KPI Card 2）：只按 shopId 收口，不排状态，
+ * 与 listExecutions 同一张表同一取用——避免把 WebhookDelivery 数量当执行数。
+ */
+export async function countExecutions(
+  client: ActivityClient,
+  shopId: string,
+  opts: { since?: Date } = {},
+): Promise<number> {
+  const where: Record<string, unknown> = { shopId };
+  if (opts.since) where.createdAt = { gte: opts.since };
+  return client.executionLog.count({ where });
+}
+
+/**
+ * 时间窗口内执行按状态分组计数（V2.0 Dashboard KPI Card 3 / 4）。
+ * 口径与 buildAutomationHealth 一致：不自己计算率，只输出原始计数，
+ * 确定性与无样本→null 的诚实处理交给 computeSuccessRate / buildDashboardMetrics。
+ */
+export async function countsByStatusSince(
+  client: ActivityClient,
+  shopId: string,
+  since: Date,
+): Promise<ExecutionStatusCounts> {
+  const rows = await client.executionLog.groupBy({
+    by: ["status"],
+    where: { shopId, createdAt: { gte: since } },
+    _count: { _all: true },
+  });
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.status] = r._count._all;
+  return out as ExecutionStatusCounts;
 }
 
 export type ExecutionRow = ExecutionSummary & {
