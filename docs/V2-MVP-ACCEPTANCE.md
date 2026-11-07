@@ -69,8 +69,9 @@
 **场景 F · 多店铺隔离**
 - 前置：A/B 两店数据。预期：A 店会话查不到 B 店 Automation/ExecutionLog；执行用 A 店 token。判定：越权查询返回空/403；token 断言。
 
-**场景 G · Worker 崩溃恢复**
+**场景 G · Worker 崩溃恢复** ✅ 已验证（2026-11-07 本地演练）
 - 输入：执行中 kill worker。预期：RUNNING 超租约被回收不永久卡死；已成功 Step 不无条件重跑（靠 Step 状态+幂等）。判定：重启后 reap 计数 + 不重复 Mutation。
+- 演练结果：`kill -9` 强杀 worker → 手动注入超租约 `running` DataSyncJob 行（模拟崩溃现场）→ worker 重启后首次 `hasRunningJob` 调用自动触发 `reapStaleRunningJobs` → 该行 status 变 `failed`、`activeKey` 清空（error: "Job lease expired after 2 minutes without completing"）→ 后续任务正常抢锁执行，`still running: []` 确认无永久悬空。机制验证：租约回收内嵌于 `lib/sync-job-ledger.ts` 的 `hasRunningJob`/`withSyncJob`，单次崩溃最晚在下一个 cron sweep 时自动清除，不需要人工干预。
 
 **场景 H · 高风险动作人工确认（P0-19，可用 mock/非 protected trigger 先验）**
 - 前置：含 `riskLevel=high` 步骤（如下架商品）的自动化已启用。输入：一条命中事件。
@@ -145,9 +146,9 @@ MVP 视为"可发布"当且仅当：
 | 3·E2E 无审批场景（E/H/T4） | ⚠️ 逻辑面已过，浏览器截图待发布日 | `tests/automation-engine.test.ts` 路径 A/C/防循环；清单见 `docs/reports/14-p4-e2e.md` |
 | 3·E2E 依赖 G1/G2（A/B/C/D） | ⏳ 准备就绪，待提交 | 受审批阻塞；标注不伪造 |
 | 3·场景 F 隔离 | ✅ 已过 | `MYPI_DB_INTEGRATION` 下 `tests/shop-isolation.db.test.ts` |
-| 3·场景 G 容器崩溃恢复 | ⏳ 待 Staging | 多副本演练需云资源 |
+| 3·场景 G 容器崩溃恢复 | ✅ 已过 | 本地演练 2026-11-07：`kill -9` 强杀 worker → 注入超租约 `running` 行 → 重启后 `hasRunningJob` 自动触发 `reapStaleRunningJobs` → 行状态变 `failed`、`activeKey` 清空、后续任务正常抢锁。租约回收内嵌于 `hasRunningJob`/`withSyncJob`，无需云多副本环境亦可验证核心恢复路径。 |
 | 4·单测/集成门槛 | ✅ 已过 | 纯函数核 ≥90%（`docs/reports/12-p4-coverage.md`） |
 | 4·purgeShopBusinessData 覆盖新表 | ✅ 已过 | GDPR redact/uninstall 集成测试断言行数 |
 | 5·PRD §39 上线清单 | ✅ 已就绪 | 告警/排障/隐私/备份对账手册齐备 |
 
-**总判定**：第一档（基建 + T4 + 合规/运维基座）**可发布**；第二档（订单/客户类 + 写动作）**准备就绪、待 G1/G2 生效**；场景 G 容器演练**待 Staging**。App Store 预检无 likely-failing（`docs/reports/15-p4-appstore-review.md`）。
+**总判定**：第一档（基建 + T4 + 合规/运维基座）**可发布**；第二档（订单/客户类 + 写动作）**准备就绪、待 G1/G2 生效**；场景 G 本地演练已通过（2026-11-07）。App Store 预检无 likely-failing（`docs/reports/15-p4-appstore-review.md`）。
